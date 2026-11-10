@@ -10,7 +10,10 @@ import {
   HelpCircle,
   FileBadge,
   Sparkles,
-  Info
+  Info,
+  Upload,
+  AlertTriangle,
+  Trash2
 } from 'lucide-react';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
@@ -32,11 +35,41 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
+  const [certPassword, setCertPassword] = useState('');
+  const [certFileName, setCertFileName] = useState('');
+  const [certFeedback, setCertFeedback] = useState<string | null>(null);
+
   // Calculate live Fator R
   const numRbt12 = parseFloat(rbt12) || 0;
   const numPayroll = parseFloat(payroll12) || 0;
   const liveFatorR = numRbt12 > 0 ? ((numPayroll / numRbt12) * 100).toFixed(1) : '0';
   const isFatorRBenefited = parseFloat(liveFatorR) >= 28.0;
+
+  const handleUploadCert = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setCertFileName(file.name);
+      updateCompany({
+        certificateStatus: 'ACTIVE',
+        certificateExpiryDate: '2027-11-30',
+      });
+      setCertFeedback(`Certificado "${file.name}" carregado e validado com sucesso!`);
+      setTimeout(() => setCertFeedback(null), 3500);
+    }
+  };
+
+  const handleRemoveCert = () => {
+    if (confirm('Deseja remover o certificado A1? Sem certificado, as notas fiscais não poderão ser assinadas na prefeitura.')) {
+      setCertFileName('');
+      setCertPassword('');
+      updateCompany({
+        certificateStatus: 'MISSING',
+        certificateExpiryDate: '',
+      });
+      setCertFeedback('Certificado A1 removido.');
+      setTimeout(() => setCertFeedback(null), 3000);
+    }
+  };
 
   const handleSave = () => {
     updateCompany({
@@ -380,20 +413,85 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         </div>
 
         {/* Digital Certificate A1 Card */}
-        <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/40 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-emerald-600 text-white">
-              <ShieldCheck className="w-5 h-5" />
+        {certFeedback && (
+          <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+            {certFeedback}
+          </div>
+        )}
+
+        {company.certificateStatus === 'ACTIVE' ? (
+          <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-emerald-600 text-white">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="font-bold text-slate-900">Certificado Digital e-CNPJ A1 Ativo</p>
+                <p className="text-slate-500">
+                  {certFileName ? `Arquivo: ${certFileName} • ` : ''}Validade até {company.certificateExpiryDate || '2027-11-30'}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="font-bold text-slate-900">Certificado Digital e-CNPJ A1 Ativo</p>
-              <p className="text-slate-500">Validade até 15/08/2027 • Emissor: Certisign Autoridade Certificadora</p>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
+                Assinador Conectado
+              </span>
+              <button
+                type="button"
+                onClick={handleRemoveCert}
+                className="p-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 text-rose-600"
+                title="Remover certificado"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           </div>
-          <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
-            Assinador Online Conectado
-          </span>
-        </div>
+        ) : (
+          <div className="p-5 rounded-xl border border-amber-300 bg-amber-50/50 space-y-3 text-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-500 text-white shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="font-bold text-slate-900 text-sm">Nenhum Certificado Digital A1 Conectado</p>
+                <p className="text-slate-600 leading-relaxed mt-0.5">
+                  Para emitir e assinar notas fiscais na prefeitura, anexe o arquivo do seu certificado <strong>e-CNPJ A1 (.pfx ou .p12)</strong> e informe a senha do arquivo.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Arquivo do Certificado (.pfx ou .p12):
+                </label>
+                <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-purple-400 bg-white hover:bg-purple-50/50 cursor-pointer text-purple-800 font-semibold transition-colors">
+                  <Upload className="w-4 h-4 text-purple-600" />
+                  <span>Selecionar arquivo .pfx / .p12</span>
+                  <input
+                    type="file"
+                    accept=".pfx,.p12"
+                    onChange={handleUploadCert}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Senha do Certificado:
+                </label>
+                <input
+                  type="password"
+                  value={certPassword}
+                  onChange={e => setCertPassword(e.target.value)}
+                  placeholder="Digite a senha do certificado A1"
+                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-slate-800"
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

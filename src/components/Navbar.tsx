@@ -10,7 +10,8 @@ import {
   RotateCcw,
   CheckCircle2,
   ExternalLink,
-  ShieldCheck
+  ShieldCheck,
+  AlertCircle
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -50,9 +51,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span>CNPJ: {company.cnpj}</span>
               <span>•</span>
-              <span className="text-emerald-600 flex items-center gap-1 font-medium">
-                <ShieldCheck className="w-3.5 h-3.5" /> Certificado A1 Válido
-              </span>
+              {company.certificateStatus === 'ACTIVE' ? (
+                <span className="text-emerald-600 flex items-center gap-1 font-medium">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Certificado A1 Válido
+                </span>
+              ) : (
+                <button
+                  onClick={() => setCurrentView('configuracoes')}
+                  className="text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium underline"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" /> Certificado A1 Pendente
+                </button>
+              )}
             </div>
           </div>
         </div>
