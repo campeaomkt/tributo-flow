@@ -30,8 +30,13 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
+  // Compute live absolute webhook URL so external platforms like Kiwify can reach the applet
+  const liveWebhookUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/api/webhooks/${platform.id}`
+    : platform.webhookUrl;
+
   const handleCopyWebhook = () => {
-    navigator.clipboard.writeText(platform.webhookUrl);
+    navigator.clipboard.writeText(liveWebhookUrl);
     setCopiedWebhook(true);
     setTimeout(() => setCopiedWebhook(false), 2000);
   };
@@ -319,7 +324,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                 <input
                   type="text"
                   readOnly
-                  value={platform.webhookUrl}
+                  value={liveWebhookUrl}
                   className="w-full px-3.5 py-2 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-mono text-xs select-all"
                 />
                 <button
