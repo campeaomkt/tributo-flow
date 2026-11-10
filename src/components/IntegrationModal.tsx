@@ -9,7 +9,7 @@ interface IntegrationModalProps {
 }
 
 export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, onClose }) => {
-  const { updatePlatform, setIsSimulatorOpen } = useFiscal();
+  const { updatePlatform, setIsSimulatorOpen, processKiwifyWebhook } = useFiscal();
 
   const [enabled, setEnabled] = useState(platform.enabled);
   const [invoiceModel, setInvoiceModel] = useState<InvoiceModel>(platform.invoiceModel);
@@ -29,11 +29,91 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
 
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [isTestingEndpoint, setIsTestingEndpoint] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; status: number; message: string } | null>(null);
+  const [importedRealSale, setImportedRealSale] = useState(false);
 
   // Compute live absolute webhook URL so external platforms like Kiwify can reach the applet
   const liveWebhookUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/api/webhooks/${platform.id}`
     : platform.webhookUrl;
+
+  const handleTestWebhook = async () => {
+    setIsTestingEndpoint(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(liveWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          test: true,
+          event: 'order_approved',
+          order: { order_ref: 'PING-TEST' }
+        })
+      });
+      if (res.ok) {
+        setTestResult({
+          ok: true,
+          status: res.status,
+          message: 'Endpoint ativo e respondendo com HTTP 200 OK! A Kiwify conseguirá entregar os webhooks sem erro.'
+        });
+      } else {
+        setTestResult({
+          ok: false,
+          status: res.status,
+          message: `O endpoint retornou HTTP ${res.status}. Na Vercel, certifique-se de que os novos arquivos /api/webhooks/kiwify.ts e vercel.json foram implantados.`
+        });
+      }
+    } catch (err: any) {
+      setTestResult({
+        ok: false,
+        status: 0,
+        message: `Não foi possível alcançar ${liveWebhookUrl}: ${err.message}`
+      });
+    } finally {
+      setIsTestingEndpoint(false);
+    }
+  };
+
+  const handleImportRealSale = () => {
+    const realPayload = {
+      order_id: "3f0c384b-bb9b-4009-82f5-2e956c914396",
+      order_ref: "N2rK3oi",
+      order_status: "paid",
+      product_type: "club",
+      payment_method: "pix",
+      store_id: "5yDbjPIo1GqwUlO",
+      sale_type: "producer",
+      created_at: "2026-11-10 14:49",
+      updated_at: "2026-11-10 14:49",
+      approved_date: "2026-11-10 14:50",
+      webhook_event_type: "order_approved",
+      Product: {
+        product_id: "fd133700-6286-11f0-a9f0-d76d4973f1b3",
+        product_name: "Pacote de Timbres - Aevo Pro 2.0",
+        product_offer_id: "f51678f2-d7d8-458c-b344-bce0fbdc034d",
+        product_offer_name: "Aevo Pro 2.0"
+      },
+      Customer: {
+        full_name: "Jaide menezes rodrigues",
+        first_name: "Jaide",
+        email: "jaidemenezes@hotmail.com",
+        mobile: "+5512981115487",
+        CPF: "19911217841"
+      },
+      Commissions: {
+        charge_amount: 3790,
+        product_base_price: 3790,
+        product_base_price_currency: "BRL",
+        kiwify_fee: 590
+      }
+    };
+
+    processKiwifyWebhook(realPayload);
+    setEnabled(true);
+    setImportedRealSale(true);
+    setTimeout(() => setImportedRealSale(false), 3000);
+  };
 
   const handleCopyWebhook = () => {
     navigator.clipboard.writeText(liveWebhookUrl);
@@ -316,8 +396,8 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
             </div>
 
             {/* Webhook URL Endpoint */}
-            <div className="pt-2">
-              <label className="block text-slate-700 font-medium mb-1">
+            <div className="pt-2 space-y-2">
+              <label className="block text-slate-700 font-medium">
                 URL de Webhook (Cole no Dashboard da {platform.name})
               </label>
               <div className="flex items-center gap-2">
@@ -336,6 +416,49 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                   <span>{copiedWebhook ? 'Copiado!' : 'Copiar'}</span>
                 </button>
               </div>
+
+              {/* Action Buttons: Testar Webhook & Importar Venda Real */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestWebhook}
+                  disabled={isTestingEndpoint}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isTestingEndpoint ? 'Testando Conexão...' : 'Testar Conexão do Webhook'}</span>
+                </button>
+
+                {platform.id === 'kiwify' && (
+                  <button
+                    type="button"
+                    onClick={handleImportRealSale}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{importedRealSale ? 'Venda Processada com Sucesso!' : 'Processar Venda do Jaide Menezes (R$ 37,90)'}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Test Result Feedback */}
+              {testResult && (
+                <div
+                  className={`p-3 rounded-lg text-xs leading-relaxed border flex items-start gap-2.5 ${
+                    testResult.ok
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  <div className="mt-0.5 shrink-0">
+                    {testResult.ok ? '✅' : '⚠️'}
+                  </div>
+                  <div>
+                    <p className="font-bold">{testResult.ok ? 'Status 200 OK - Sucesso!' : `Aviso: Resposta HTTP ${testResult.status}`}</p>
+                    <p className="mt-0.5">{testResult.message}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

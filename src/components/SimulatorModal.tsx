@@ -18,9 +18,9 @@ interface SimulatorModalProps {
 }
 
 export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
-  const { platforms, simulateSale, simulateRefund, sales, company } = useFiscal();
+  const { platforms, simulateSale, simulateRefund, sales, company, processKiwifyWebhook } = useFiscal();
 
-  const [mode, setMode] = useState<'sale' | 'refund'>('sale');
+  const [mode, setMode] = useState<'sale' | 'refund' | 'json'>('sale');
   const [platform, setPlatform] = useState<PlatformId>('kiwify');
   const [productName, setProductName] = useState('PADS CONTINUOS EM TODOS OS TONS');
   const [amount, setAmount] = useState('19.90');
@@ -28,6 +28,46 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
   const [customerName, setCustomerName] = useState('Marina Rocha Azevedo');
   const [customerDoc, setCustomerDoc] = useState('388.910.420-19');
   const [customerEmail, setCustomerEmail] = useState('marina.azevedo@gmail.com');
+
+  const defaultKiwifyJson = JSON.stringify({
+    url: "https://tributo-flow.vercel.app/api/webhooks/kiwify",
+    signature: "1aeffd73ae28d2c67a318cc4290f08bd55dc1b5f",
+    order: {
+      order_id: "3f0c384b-bb9b-4009-82f5-2e956c914396",
+      order_ref: "N2rK3oi",
+      order_status: "paid",
+      product_type: "club",
+      payment_method: "pix",
+      store_id: "5yDbjPIo1GqwUlO",
+      sale_type: "producer",
+      created_at: "2026-11-10 14:49",
+      updated_at: "2026-11-10 14:49",
+      approved_date: "2026-11-10 14:50",
+      webhook_event_type: "order_approved",
+      Product: {
+        product_id: "fd133700-6286-11f0-a9f0-d76d4973f1b3",
+        product_name: "Pacote de Timbres - Aevo Pro 2.0",
+        product_offer_id: "f51678f2-d7d8-458c-b344-bce0fbdc034d",
+        product_offer_name: "Aevo Pro 2.0"
+      },
+      Customer: {
+        full_name: "Jaide menezes rodrigues",
+        first_name: "Jaide",
+        email: "jaidemenezes@hotmail.com",
+        mobile: "+5512981115487",
+        CPF: "19911217841"
+      },
+      Commissions: {
+        charge_amount: 3790,
+        product_base_price: 3790,
+        product_base_price_currency: "BRL",
+        kiwify_fee: 590
+      }
+    }
+  }, null, 2);
+
+  const [rawJson, setRawJson] = useState(defaultKiwifyJson);
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const [selectedSaleToRefund, setSelectedSaleToRefund] = useState(sales[0]?.id || '');
   const [simulatedSuccess, setSimulatedSuccess] = useState<string | null>(null);
@@ -69,6 +109,21 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
     }, 1800);
   };
 
+  const handleProcessJson = () => {
+    setJsonError(null);
+    try {
+      const parsed = JSON.parse(rawJson);
+      processKiwifyWebhook(parsed);
+      setSimulatedSuccess('Venda real da Kiwify processada com sucesso! Venda registrada e Nota Fiscal gerada.');
+      setTimeout(() => {
+        setSimulatedSuccess(null);
+        onClose();
+      }, 1800);
+    } catch (err: any) {
+      setJsonError(`Erro no formato JSON: ${err.message}`);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
       <div 
@@ -106,7 +161,7 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            1. Simular Nova Venda (Aprovada)
+            1. Simular Venda
           </button>
           <button
             onClick={() => setMode('refund')}
@@ -116,7 +171,17 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            2. Simular Reembolso (Cancelamento)
+            2. Simular Reembolso
+          </button>
+          <button
+            onClick={() => setMode('json' as any)}
+            className={`flex-1 py-3 text-center border-b-2 transition-colors ${
+              (mode as any) === 'json'
+                ? 'border-indigo-600 text-indigo-700 bg-white'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            3. Colar JSON Real Kiwify
           </button>
         </div>
 
@@ -271,11 +336,11 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
                 </div>
               </div>
             </>
-          ) : (
+          ) : mode === 'refund' ? (
             /* Refund Mode */
             <div className="space-y-4">
               <p className="text-slate-600 leading-relaxed">
-                Quando um cliente pede reembolso na Kiwify ou Hotmart dentro do prazo legal de 7 dias, a plataforma envia um webhook de estorno. O Spedy detecta e cancela a nota fiscal automaticamente, protegendo seu faturamento contábil de impostos indevidos.
+                Quando um cliente pede reembolso na Kiwify ou Hotmart dentro do prazo legal de 7 dias, a plataforma envia um webhook de estorno. O TributoFlow detecta e cancela a nota fiscal automaticamente, protegendo seu faturamento contábil de impostos indevidos.
               </p>
 
               <div>
@@ -294,6 +359,34 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
                   ))}
                 </select>
               </div>
+            </div>
+          ) : (
+            /* JSON Mode */
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-800">Payload Webhook Kiwify (JSON)</span>
+                <button
+                  type="button"
+                  onClick={() => setRawJson(defaultKiwifyJson)}
+                  className="text-[11px] text-purple-700 hover:text-purple-900 font-semibold underline"
+                >
+                  Carregar Venda Jaide Menezes (R$ 37,90)
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Cole abaixo o JSON bruto copiado dos logs de webhook da Kiwify para processar instantaneamente a venda e a emissão da NFS-e:
+              </p>
+              <textarea
+                value={rawJson}
+                onChange={e => setRawJson(e.target.value)}
+                rows={9}
+                className="w-full p-2.5 rounded-lg border border-slate-300 font-mono text-[11px] text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#2c0853]"
+              />
+              {jsonError && (
+                <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px]">
+                  {jsonError}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -315,13 +408,21 @@ export const SimulatorModal: React.FC<SimulatorModalProps> = ({ onClose }) => {
               <Zap className="w-4 h-4 text-amber-300" />
               <span>Disparar Webhook de Venda</span>
             </button>
-          ) : (
+          ) : mode === 'refund' ? (
             <button
               onClick={handleRunRefundSimulation}
               className="flex items-center gap-2 px-5 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-950/20"
             >
               <RotateCcw className="w-4 h-4" />
               <span>Simular Estorno / Cancelamento</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleProcessJson}
+              className="flex items-center gap-2 px-5 py-2 rounded-lg bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-xs shadow-md shadow-indigo-950/20"
+            >
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <span>Processar JSON da Kiwify</span>
             </button>
           )}
         </div>

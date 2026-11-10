@@ -54,6 +54,7 @@ interface FiscalContextType {
     customerEmail: string;
   }) => void;
   simulateRefund: (saleId: string) => void;
+  processKiwifyWebhook: (payload: any) => void;
   closeMonth: (year: number, month: number) => void;
   resetToDefault: () => void;
 }
@@ -129,6 +130,30 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.CLOSINGS, JSON.stringify(monthlyClosings));
   }, [monthlyClosings]);
+
+  // Poll backend for real webhooks received while running
+  useEffect(() => {
+    const fetchReceivedEvents = async () => {
+      try {
+        const res = await fetch('/api/webhooks/history');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.events)) {
+          data.events.forEach((evt: any) => {
+            if (evt.platform === 'kiwify' && evt.body) {
+              processKiwifyWebhook(evt.body);
+            }
+          });
+        }
+      } catch (e) {
+        // Ignore polling errors
+      }
+    };
+
+    fetchReceivedEvents();
+    const interval = setInterval(fetchReceivedEvents, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   const updateCompany = (settings: Partial<CompanySettings>) => {
     setCompany(prev => ({ ...prev, ...settings }));
@@ -305,6 +330,118 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  const processKiwifyWebhook = (payload: any) => {
+    try {
+      const order = payload.order || payload;
+      const orderId = order.order_id || `KW-${Date.now()}`;
+
+      // Check if already processed
+      if (sales.some(s => s.externalSaleId === orderId || s.externalSaleId === order.order_ref)) {
+        return;
+      }
+
+      const platformConfig = platforms.find(p => p.id === 'kiwify');
+      const isApproved = order.order_status === 'paid' || order.webhook_event_type === 'order_approved';
+      const isRefunded = order.order_status === 'refunded' || order.webhook_event_type === 'order_refunded';
+
+      if (isRefunded) {
+        const existingSale = sales.find(s => s.externalSaleId === orderId || s.externalSaleId === order.order_ref);
+        if (existingSale) {
+          simulateRefund(existingSale.id);
+        }
+        return;
+      }
+
+      const productName = order.Product?.product_name || 'Produto Kiwify';
+      const customerName = order.Customer?.full_name || order.Customer?.first_name || 'Cliente Kiwify';
+      const customerDoc = order.Customer?.CPF || order.Customer?.cnpj || '000.000.000-00';
+      const customerEmail = order.Customer?.email || 'cliente@kiwify.com.br';
+      
+      // Amount in Kiwify comes in cents (e.g. 3790 = R$ 37.90)
+      const rawCharge = order.Commissions?.charge_amount || order.Commissions?.product_base_price || 3790;
+      const amount = typeof rawCharge === 'number' && rawCharge > 500 ? rawCharge / 100 : Number(rawCharge) || 37.90;
+      
+      const paymentMethod = order.payment_method === 'pix' ? 'PIX' : order.payment_method === 'boleto' ? 'BOLETO' : 'CARTAO_CREDITO';
+      const now = new Date();
+      const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      
+      const warrantyDays = platformConfig?.warrantyDays ?? 7;
+      const warrantyDate = new Date();
+      warrantyDate.setDate(warrantyDate.getDate() + warrantyDays);
+      const formattedWarranty = `${warrantyDate.getFullYear()}-${String(warrantyDate.getMonth() + 1).padStart(2, '0')}-${String(warrantyDate.getDate()).padStart(2, '0')} 23:59:59`;
+
+      const saleId = `sale_kw_${Date.now()}`;
+      const invId = `inv_kw_${Date.now()}`;
+
+      const isImmediate = platformConfig?.trigger === 'on_payment_approved';
+      const invStatus: 'EMITIDA' | 'PENDENTE' = isImmediate ? 'EMITIDA' : 'PENDENTE';
+
+      const newSale: Sale = {
+        id: saleId,
+        externalSaleId: order.order_ref || orderId,
+        platform: 'kiwify',
+        productName,
+        productId: order.Product?.product_id || 'prod_kw',
+        amount,
+        paymentMethod,
+        installments: order.installments || 1,
+        status: 'approved',
+        createdAt: order.created_at || formattedDate,
+        paidAt: order.approved_date || formattedDate,
+        warrantyExpiresAt: formattedWarranty,
+        customer: {
+          id: `cust_${Date.now()}`,
+          name: customerName,
+          document: customerDoc,
+          email: customerEmail,
+          city: 'São Paulo',
+          state: 'SP',
+        },
+        invoiceId: invId,
+        invoiceStatus: invStatus,
+      };
+
+      const taxes = calculateTaxes(amount, company);
+      const invoiceNum = (20260000500 + invoices.length).toString();
+
+      const newInvoice: FiscalInvoice = {
+        id: invId,
+        number: invoiceNum,
+        series: '1',
+        rpsNumber: (8500 + invoices.length).toString(),
+        verificationCode: `VER-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+        accessKey: `352610${company.cnpj.replace(/\D/g, '')}5500100000${invoiceNum}100918231`,
+        saleId: saleId,
+        platform: 'kiwify',
+        model: 'NFS-e',
+        status: invStatus,
+        issuedAt: formattedDate,
+        scheduledFor: isImmediate ? undefined : `${formattedWarranty} (Fim de Garantia)`,
+        customer: newSale.customer,
+        productName,
+        description: `Licenciamento e acesso a plataforma de conteúdo digital: ${productName}`,
+        serviceCode: company.serviceCode,
+        cnae: company.cnaePrincipal,
+        grossAmount: amount,
+        netAmount: amount - taxes.totalTax,
+        taxes,
+        emailSent: isImmediate && !!platformConfig?.sendEmailToCustomer,
+      };
+
+      setSales(prev => [newSale, ...prev]);
+      setInvoices(prev => [newInvoice, ...prev]);
+
+      // Automatically enable Kiwify platform and update sales count
+      updatePlatform('kiwify', {
+        enabled: true,
+        totalSalesProcessed: (platformConfig?.totalSalesProcessed || 0) + 1,
+        lastSync: formattedDate,
+      });
+    } catch (err) {
+      console.error('Erro ao processar webhook da Kiwify:', err);
+    }
+  };
+
   const closeMonth = (year: number, month: number) => {
     const now = new Date();
     const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -362,6 +499,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         cancelInvoice,
         simulateSale,
         simulateRefund,
+        processKiwifyWebhook,
         closeMonth,
         resetToDefault,
       }}

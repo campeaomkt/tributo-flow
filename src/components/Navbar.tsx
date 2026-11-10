@@ -126,12 +126,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
             onClick={() => setUserDropdownOpen(!userDropdownOpen)}
             className="flex items-center gap-2.5 p-1 rounded-lg hover:bg-slate-50 transition-colors"
           >
-            <div className="w-8 h-8 rounded-full bg-violet-600 text-white font-bold text-xs flex items-center justify-center shadow-sm">
-              TF
+            <div className="w-8 h-8 rounded-full bg-[#2c0853] text-white font-bold text-xs flex items-center justify-center shadow-sm">
+              ES
             </div>
             <div className="hidden lg:block text-left">
-              <p className="text-xs font-semibold text-slate-800 leading-tight">Minha Conta</p>
-              <p className="text-[10px] text-slate-400">Administrador</p>
+              <p className="text-xs font-semibold text-slate-800 leading-tight">Eliab Campos dos S...</p>
+              <p className="text-[10px] text-slate-400">campeao.mkt.user@...</p>
             </div>
             <ChevronDown className="w-4 h-4 text-slate-400" />
           </button>
