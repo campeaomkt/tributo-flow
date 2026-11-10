@@ -1,0 +1,6 @@
+{
+  "name": "TributoFlow - Automação Fiscal Inteligente",
+  "description": "Emissão 100% automática de notas fiscais (NFS-e/NF-e) integrada com Kiwify, Hotmart e plataformas digitais com múltiplos regimes tributários, painel analítico em tempo real e fechamento contábil otimizado.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
