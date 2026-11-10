@@ -13,7 +13,11 @@ import {
   Info,
   Upload,
   AlertTriangle,
-  Trash2
+  Trash2,
+  Eye,
+  EyeOff,
+  Lock,
+  KeyRound
 } from 'lucide-react';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
@@ -35,9 +39,11 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const [certPassword, setCertPassword] = useState('');
-  const [certFileName, setCertFileName] = useState('');
-  const [certFeedback, setCertFeedback] = useState<string | null>(null);
+  const [certPassword, setCertPassword] = useState(company.certificatePassword || '');
+  const [certFileName, setCertFileName] = useState(company.certificateFileName || '');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [showCertPassword, setShowCertPassword] = useState(false);
+  const [certFeedback, setCertFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Calculate live Fator R
   const numRbt12 = parseFloat(rbt12) || 0;
@@ -45,28 +51,67 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const liveFatorR = numRbt12 > 0 ? ((numPayroll / numRbt12) * 100).toFixed(1) : '0';
   const isFatorRBenefited = parseFloat(liveFatorR) >= 28.0;
 
-  const handleUploadCert = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelectFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setSelectedFile(file);
       setCertFileName(file.name);
-      updateCompany({
-        certificateStatus: 'ACTIVE',
-        certificateExpiryDate: '2027-11-30',
+      setCertFeedback({
+        type: 'success',
+        message: `Arquivo "${file.name}" selecionado! Agora digite a senha do certificado para autenticar a chave privada.`,
       });
-      setCertFeedback(`Certificado "${file.name}" carregado e validado com sucesso!`);
-      setTimeout(() => setCertFeedback(null), 3500);
     }
   };
 
+  const handleInstallCertificate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const effectiveFileName = selectedFile ? selectedFile.name : certFileName;
+
+    if (!effectiveFileName) {
+      setCertFeedback({
+        type: 'error',
+        message: 'Por favor, selecione primeiro o arquivo do certificado digital (.pfx ou .p12).',
+      });
+      return;
+    }
+
+    if (!certPassword || certPassword.trim().length === 0) {
+      setCertFeedback({
+        type: 'error',
+        message: 'A senha do certificado é obrigatória! Sem a senha, a chave privada A1 não pode ser descriptografada para assinar as notas.',
+      });
+      return;
+    }
+
+    updateCompany({
+      certificateStatus: 'ACTIVE',
+      certificateFileName: effectiveFileName,
+      certificatePassword: certPassword,
+      certificateExpiryDate: '2027-11-30',
+    });
+
+    setCertFeedback({
+      type: 'success',
+      message: `Certificado "${effectiveFileName}" autenticado e validado com sucesso! Senha configurada para assinatura das NFS-e.`,
+    });
+    setTimeout(() => setCertFeedback(null), 4000);
+  };
+
   const handleRemoveCert = () => {
-    if (confirm('Deseja remover o certificado A1? Sem certificado, as notas fiscais não poderão ser assinadas na prefeitura.')) {
+    if (confirm('Deseja remover o certificado A1? Sem o certificado e a senha, as notas fiscais não poderão ser assinadas na prefeitura.')) {
       setCertFileName('');
       setCertPassword('');
+      setSelectedFile(null);
       updateCompany({
         certificateStatus: 'MISSING',
         certificateExpiryDate: '',
+        certificateFileName: '',
+        certificatePassword: '',
       });
-      setCertFeedback('Certificado A1 removido.');
+      setCertFeedback({
+        type: 'error',
+        message: 'Certificado A1 e senha removidos.',
+      });
       setTimeout(() => setCertFeedback(null), 3000);
     }
   };
@@ -467,83 +512,152 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
 
         {/* Digital Certificate A1 Card */}
         {certFeedback && (
-          <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
-            {certFeedback}
+          <div
+            className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+              certFeedback.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}
+          >
+            {certFeedback.type === 'success' ? (
+              <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{certFeedback.message}</span>
           </div>
         )}
 
         {company.certificateStatus === 'ACTIVE' ? (
-          <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-emerald-600 text-white">
-                <ShieldCheck className="w-5 h-5" />
+          <div className="p-5 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-4 text-xs">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-600 text-white shadow-sm">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-slate-900 text-sm">Certificado Digital e-CNPJ A1 Ativo</p>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
+                      Chave Privada Pronta
+                    </span>
+                  </div>
+                  <p className="text-slate-600 mt-0.5">
+                    Arquivo: <strong className="font-mono text-slate-800">{company.certificateFileName || certFileName || 'certificado.pfx'}</strong>
+                    {' '}• Validade até {company.certificateExpiryDate || '30/11/2027'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="font-bold text-slate-900">Certificado Digital e-CNPJ A1 Ativo</p>
-                <p className="text-slate-500">
-                  {certFileName ? `Arquivo: ${certFileName} • ` : ''}Validade até {company.certificateExpiryDate || '2027-11-30'}
-                </p>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRemoveCert}
+                  className="px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Substituir / Remover</span>
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
-                Assinador Conectado
+
+            <div className="p-3 bg-white rounded-lg border border-emerald-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px]">
+              <div className="flex items-center gap-2 text-slate-600">
+                <Lock className="w-4 h-4 text-emerald-600" />
+                <span>Senha do Certificado:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {showCertPassword ? (company.certificatePassword || certPassword || '••••••••') : '••••••••••••'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowCertPassword(!showCertPassword)}
+                  className="text-slate-400 hover:text-slate-600 ml-1"
+                  title={showCertPassword ? 'Ocultar' : 'Exibir'}
+                >
+                  {showCertPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <span className="text-emerald-700 font-medium">
+                ✓ Pronto para assinar e autorizar NFS-e na prefeitura
               </span>
-              <button
-                type="button"
-                onClick={handleRemoveCert}
-                className="p-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 text-rose-600"
-                title="Remover certificado"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
             </div>
           </div>
         ) : (
-          <div className="p-5 rounded-xl border border-amber-300 bg-amber-50/50 space-y-3 text-xs">
+          <form onSubmit={handleInstallCertificate} className="p-5 rounded-xl border border-amber-300 bg-amber-50/50 space-y-4 text-xs">
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-lg bg-amber-500 text-white shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <p className="font-bold text-slate-900 text-sm">Nenhum Certificado Digital A1 Conectado</p>
+                <p className="font-bold text-slate-900 text-sm">Instalação do Certificado Digital A1</p>
                 <p className="text-slate-600 leading-relaxed mt-0.5">
-                  Para emitir e assinar notas fiscais na prefeitura, anexe o arquivo do seu certificado <strong>e-CNPJ A1 (.pfx ou .p12)</strong> e informe a senha do arquivo.
+                  Para emitir e assinar notas fiscais com validade jurídica, selecione o arquivo <strong>.pfx ou .p12</strong> do seu e-CNPJ e digite a <strong>senha do certificado</strong>.
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              {/* Step 1: File */}
               <div>
                 <label className="block text-slate-700 font-semibold mb-1">
-                  Arquivo do Certificado (.pfx ou .p12):
+                  <span className="text-red-500">*</span> 1. Arquivo do Certificado (.pfx ou .p12):
                 </label>
                 <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-purple-400 bg-white hover:bg-purple-50/50 cursor-pointer text-purple-800 font-semibold transition-colors">
                   <Upload className="w-4 h-4 text-purple-600" />
-                  <span>Selecionar arquivo .pfx / .p12</span>
+                  <span>{certFileName ? `Trocar: ${certFileName}` : 'Selecionar arquivo .pfx / .p12'}</span>
                   <input
                     type="file"
                     accept=".pfx,.p12"
-                    onChange={handleUploadCert}
+                    onChange={handleSelectFile}
                     className="hidden"
                   />
                 </label>
+                {certFileName && (
+                  <p className="text-[11px] text-emerald-700 font-semibold mt-1.5 flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" /> Arquivo carregado: {certFileName}
+                  </p>
+                )}
               </div>
 
+              {/* Step 2: Password */}
               <div>
                 <label className="block text-slate-700 font-semibold mb-1">
-                  Senha do Certificado:
+                  <span className="text-red-500">*</span> 2. Senha do Certificado A1:
                 </label>
-                <input
-                  type="password"
-                  value={certPassword}
-                  onChange={e => setCertPassword(e.target.value)}
-                  placeholder="Digite a senha do certificado A1"
-                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-slate-800"
-                />
+                <div className="relative">
+                  <input
+                    type={showCertPassword ? 'text' : 'password'}
+                    value={certPassword}
+                    onChange={e => setCertPassword(e.target.value)}
+                    placeholder="Digite a senha do seu certificado .pfx"
+                    className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-slate-300 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#2c0853]"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCertPassword(!showCertPassword)}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                  >
+                    {showCertPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  A senha é necessária para descriptografar a chave privada na assinatura das notas.
+                </p>
               </div>
             </div>
-          </div>
+
+            {/* Step 3: Install Button */}
+            <div className="pt-2 flex items-center justify-end">
+              <button
+                type="submit"
+                className="px-5 py-2.5 rounded-xl bg-[#2c0853] hover:bg-[#3d0b72] text-white font-bold text-xs shadow-md shadow-purple-950/20 transition-all flex items-center gap-2"
+              >
+                <KeyRound className="w-4 h-4 text-amber-300" />
+                <span>Instalar & Validar Certificado A1</span>
+              </button>
+            </div>
+          </form>
         )}
       </div>
     </div>

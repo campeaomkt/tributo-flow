@@ -164,6 +164,8 @@ export interface CompanySettings {
   accountantToken: string;
   certificateStatus: 'ACTIVE' | 'EXPIRED' | 'MISSING';
   certificateExpiryDate: string;
+  certificateFileName?: string;
+  certificatePassword?: string;
 }
 
 export interface MonthlyClosing {
