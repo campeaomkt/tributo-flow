@@ -132,10 +132,16 @@ export interface FiscalInvoice {
 
 export interface CompanySettings {
   corporateName: string; // "CAMPEAO NEGOCIOS DIGITAIS LTDA"
-  tradeName: string;
+  tradeName: string; // "CAMPEAO NEGOCIOS DIGITIAS"
   cnpj: string; // "40.731.222/0001-07"
-  municipalRegistration: string; // "7.129.844-9"
-  stateRegistration?: string;
+  municipalRegistration: string;
+  stateRegistration?: string; // "264108787"
+  crt: string; // "Simples Nacional"
+  specialRegime: string; // "Microempresário e Empresa de Pequeno Porte (ME EPP)"
+  simplesApuracaoRegime: string; // "Regime de apuração dos tributos federais e municipal pelo SN"
+  email: string; // "campeao.mkt.user@gmail.com"
+  phone: string; // "(69) 9265-3785"
+  mobile: string; // "(69) 99265-3785"
   taxRegime: TaxRegime;
   simplesAnexo: 'ANEXO_I' | 'ANEXO_III' | 'ANEXO_V';
   fatorRActive: boolean;

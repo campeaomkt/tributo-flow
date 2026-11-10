@@ -2,10 +2,16 @@ import { CompanySettings, PlatformConfig, Product, Sale, FiscalInvoice, MonthlyC
 
 export const initialCompanySettings: CompanySettings = {
   corporateName: 'CAMPEAO NEGOCIOS DIGITAIS LTDA',
-  tradeName: 'Campeão Negócios Digitais',
+  tradeName: 'CAMPEAO NEGOCIOS DIGITIAS',
   cnpj: '40.731.222/0001-07',
-  municipalRegistration: '1.248.910-4',
-  stateRegistration: 'Isento',
+  stateRegistration: '264108787',
+  municipalRegistration: '',
+  crt: 'Simples Nacional',
+  specialRegime: 'Microempresário e Empresa de Pequeno Porte (ME EPP)',
+  simplesApuracaoRegime: 'Regime de apuração dos tributos federais e municipal pelo SN',
+  email: 'campeao.mkt.user@gmail.com',
+  phone: '(69) 9265-3785',
+  mobile: '(69) 99265-3785',
   taxRegime: 'SIMPLES_NACIONAL',
   simplesAnexo: 'ANEXO_III',
   fatorRActive: true,
@@ -15,13 +21,13 @@ export const initialCompanySettings: CompanySettings = {
   serviceCode: '01.07', // Suporte técnico, consultoria em TI e serviços digitais
   cnaePrincipal: '6202-3/00', // Desenvolvimento e licenciamento de softwares e infoprodutos
   address: {
-    street: 'Avenida Paulista',
-    number: '1000',
-    complement: 'Sala 101',
-    neighborhood: 'Bela Vista',
-    city: 'São Paulo',
-    state: 'SP',
-    zipCode: '01310-100',
+    zipCode: '88475-000',
+    street: 'RUA ARCELINA SOUZA BRAND',
+    number: '788',
+    complement: '',
+    neighborhood: 'VILA ANTONIO DAVID',
+    city: 'Anitápolis',
+    state: 'SC',
   },
   accountantName: 'Sua Contabilidade',
   accountantEmail: 'contabilidade@empresa.com.br',
@@ -38,9 +44,9 @@ export const initialPlatforms: PlatformConfig[] = [
     name: 'Kiwify',
     logo: '',
     tagline: 'Vendas de cursos, infoprodutos e mentorias',
-    enabled: false,
+    enabled: true,
     invoiceModel: 'NFS-e',
-    trigger: 'on_warranty_expired',
+    trigger: 'on_payment_approved',
     sendEmailToCustomer: true,
     cancelOnRefund: true,
     clientId: 'cb4871c1-cdc7-4b85-a27c-4e89ef5557fb',
@@ -52,7 +58,8 @@ export const initialPlatforms: PlatformConfig[] = [
     warrantyDays: 7,
     webhookUrl: 'https://tributo-flow.vercel.app/api/webhooks/kiwify',
     webhookSecret: '',
-    totalSalesProcessed: 0,
+    totalSalesProcessed: 1,
+    lastSync: '10/11/2026 15:10',
   },
   {
     id: 'hotmart',
@@ -182,11 +189,85 @@ export const initialPlatforms: PlatformConfig[] = [
   },
 ];
 
-export const initialProducts: Product[] = [];
+export const initialProducts: Product[] = [
+  {
+    id: 'prod_aevo_pro',
+    name: 'Pacote de Timbres - Aevo Pro 2.0',
+    platform: 'kiwify',
+    externalId: 'fd133700-6286-11f0-a9f0-d76d4973f1b3',
+    price: 37.90,
+    serviceCode: '01.07',
+    cnae: '6202-3/00',
+    salesCount: 1,
+    totalRevenue: 37.90,
+  },
+];
 
-// Starts clean with 0 fictive sales and 0 fictive invoices
+// Seeded with the real Kiwify webhook sale confirmed by the user
 export function generateInitialInvoices(): { sales: Sale[]; invoices: FiscalInvoice[] } {
-  return { sales: [], invoices: [] };
+  const realSale: Sale = {
+    id: 'sale_n2rk3oi',
+    externalSaleId: 'N2RK3OI',
+    platform: 'kiwify',
+    productName: 'Pacote de Timbres - Aevo Pro 2.0',
+    productId: 'fd133700-6286-11f0-a9f0-d76d4973f1b3',
+    amount: 37.90,
+    paymentMethod: 'PIX',
+    installments: 1,
+    status: 'approved',
+    createdAt: '2026-11-10 14:49:00',
+    paidAt: '2026-11-10 14:50:00',
+    warrantyExpiresAt: '2026-11-17 23:59:59',
+    customer: {
+      id: 'cust_jaide_menezes',
+      name: 'Jaide menezes rodrigues',
+      document: '199.112.178-41',
+      email: 'jaidemenezes@hotmail.com',
+      city: 'São Paulo',
+      state: 'SP',
+    },
+    invoiceId: 'inv_n2rk3oi',
+    invoiceStatus: 'EMITIDA',
+  };
+
+  const realInvoice: FiscalInvoice = {
+    id: 'inv_n2rk3oi',
+    number: '20260000001',
+    series: '1',
+    rpsNumber: '8501',
+    verificationCode: 'VER-KW78-AEVO',
+    accessKey: '35261040731222000107550010000020260000001100918231',
+    saleId: 'sale_n2rk3oi',
+    platform: 'kiwify',
+    model: 'NFS-e',
+    status: 'EMITIDA',
+    issuedAt: '2026-11-10 15:10:00',
+    customer: realSale.customer,
+    productName: realSale.productName,
+    description: 'Licenciamento e acesso a plataforma de conteúdo digital: Pacote de Timbres - Aevo Pro 2.0',
+    serviceCode: '01.07',
+    cnae: '6202-3/00',
+    grossAmount: 37.90,
+    netAmount: 35.63,
+    taxes: {
+      regime: 'SIMPLES_NACIONAL',
+      effectiveRate: 6.0,
+      totalTax: 2.27,
+      issRate: 2.0,
+      issAmount: 0.76,
+      pisRate: 0.35,
+      pisAmount: 0.13,
+      cofinsRate: 1.6,
+      cofinsAmount: 0.61,
+      irpjRate: 0.27,
+      irpjAmount: 0.10,
+      csllRate: 0.27,
+      csllAmount: 0.10,
+    },
+    emailSent: true,
+  };
+
+  return { sales: [realSale], invoices: [realInvoice] };
 }
 
 export const initialMonthlyClosings: MonthlyClosing[] = [
@@ -194,13 +275,13 @@ export const initialMonthlyClosings: MonthlyClosing[] = [
     year: 2026,
     month: 11,
     monthName: 'Novembro / 2026',
-    grossRevenue: 0,
-    netRevenue: 0,
-    invoicesCount: 0,
+    grossRevenue: 37.90,
+    netRevenue: 35.63,
+    invoicesCount: 1,
     cancelledCount: 0,
-    estimatedTaxes: 0,
-    simplesDasEstimate: 0,
-    issDue: 0,
+    estimatedTaxes: 2.27,
+    simplesDasEstimate: 2.27,
+    issDue: 0.76,
     isClosed: false,
   },
   {

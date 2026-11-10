@@ -15,6 +15,7 @@ import { ClientesView } from './components/ClientesView';
 import { DanfeModal } from './components/DanfeModal';
 import { IntegrationModal } from './components/IntegrationModal';
 import { SimulatorModal } from './components/SimulatorModal';
+import { CompanySettingsModal } from './components/CompanySettingsModal';
 
 const MainLayout: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -25,7 +26,9 @@ const MainLayout: React.FC = () => {
     selectedPlatformForModal,
     setSelectedPlatformForModal,
     isSimulatorOpen,
-    setIsSimulatorOpen 
+    setIsSimulatorOpen,
+    isCompanyModalOpen,
+    setIsCompanyModalOpen,
   } = useFiscal();
 
   return (
@@ -74,6 +77,13 @@ const MainLayout: React.FC = () => {
       {isSimulatorOpen && (
         <SimulatorModal
           onClose={() => setIsSimulatorOpen(false)}
+        />
+      )}
+
+      {/* Dados da Empresa Modal matching user screenshot */}
+      {isCompanyModalOpen && (
+        <CompanySettingsModal
+          onClose={() => setIsCompanyModalOpen(false)}
         />
       )}
     </div>

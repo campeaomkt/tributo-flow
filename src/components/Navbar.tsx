@@ -19,7 +19,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
-  const { company, setIsSimulatorOpen, setCurrentView, resetToDefault } = useFiscal();
+  const { company, setIsSimulatorOpen, setIsCompanyModalOpen, setCurrentView, resetToDefault } = useFiscal();
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
@@ -35,13 +35,17 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
           <Menu className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-3 pl-2 border-l border-slate-200">
-          <div className="w-9 h-9 rounded-lg bg-purple-50 text-purple-700 flex items-center justify-center border border-purple-200 shrink-0">
+        <div 
+          onClick={() => setIsCompanyModalOpen(true)}
+          className="flex items-center gap-3 pl-2 border-l border-slate-200 cursor-pointer hover:bg-slate-50 p-1 rounded-xl transition-all group"
+          title="Clique para editar os Dados da Empresa"
+        >
+          <div className="w-9 h-9 rounded-lg bg-purple-50 text-purple-700 flex items-center justify-center border border-purple-200 shrink-0 group-hover:border-purple-400 group-hover:bg-purple-100 transition-colors">
             <Building2 className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-800 text-sm tracking-tight font-sans">
+              <span className="font-bold text-slate-800 text-sm tracking-tight font-sans group-hover:text-purple-900 transition-colors">
                 {company.corporateName}
               </span>
               <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -57,7 +61,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
                 </span>
               ) : (
                 <button
-                  onClick={() => setCurrentView('configuracoes')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentView('configuracoes');
+                  }}
                   className="text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium underline"
                 >
                   <AlertCircle className="w-3.5 h-3.5 text-amber-500" /> Certificado A1 Pendente
@@ -144,13 +151,13 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
               </div>
               <button
                 onClick={() => {
-                  setCurrentView('configuracoes');
+                  setIsCompanyModalOpen(true);
                   setUserDropdownOpen(false);
                 }}
                 className="w-full text-left px-4 py-2 hover:bg-slate-50 text-slate-700 flex items-center gap-2"
               >
-                <Building2 className="w-4 h-4 text-slate-400" />
-                <span>Dados da Empresa e Fiscais</span>
+                <Building2 className="w-4 h-4 text-purple-600" />
+                <span className="font-semibold text-purple-900">Dados da Empresa</span>
               </button>
               <button
                 onClick={() => {

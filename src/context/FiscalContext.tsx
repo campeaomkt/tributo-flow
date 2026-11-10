@@ -37,6 +37,8 @@ interface FiscalContextType {
   setSelectedPlatformForModal: (platform: PlatformConfig | null) => void;
   isSimulatorOpen: boolean;
   setIsSimulatorOpen: (open: boolean) => void;
+  isCompanyModalOpen: boolean;
+  setIsCompanyModalOpen: (open: boolean) => void;
   
   // Actions
   updateCompany: (settings: Partial<CompanySettings>) => void;
@@ -62,11 +64,11 @@ interface FiscalContextType {
 const FiscalContext = createContext<FiscalContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  COMPANY: 'tributoflow_company_v3',
-  PLATFORMS: 'tributoflow_platforms_v3',
-  SALES: 'tributoflow_sales_v3',
-  INVOICES: 'tributoflow_invoices_v3',
-  CLOSINGS: 'tributoflow_closings_v3',
+  COMPANY: 'tributoflow_company_v5',
+  PLATFORMS: 'tributoflow_platforms_v5',
+  SALES: 'tributoflow_sales_v5',
+  INVOICES: 'tributoflow_invoices_v5',
+  CLOSINGS: 'tributoflow_closings_v5',
 };
 
 export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -109,6 +111,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [selectedInvoiceForDanfe, setSelectedInvoiceForDanfe] = useState<FiscalInvoice | null>(null);
   const [selectedPlatformForModal, setSelectedPlatformForModal] = useState<PlatformConfig | null>(null);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
+  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState<boolean>(false);
 
   // Sync to localStorage
   useEffect(() => {
@@ -492,6 +495,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setSelectedPlatformForModal,
         isSimulatorOpen,
         setIsSimulatorOpen,
+        isCompanyModalOpen,
+        setIsCompanyModalOpen,
         updateCompany,
         updatePlatform,
         emitInvoice,

@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
-  const { company, updateCompany } = useFiscal();
+  const { company, updateCompany, setIsCompanyModalOpen } = useFiscal();
 
   const [taxRegime, setTaxRegime] = useState<TaxRegime>(company.taxRegime);
   const [simplesAnexo, setSimplesAnexo] = useState(company.simplesAnexo);
@@ -142,13 +142,66 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
           <div className="p-3.5 rounded-xl bg-white/10 border border-white/10 space-y-1">
             <p className="font-bold text-emerald-300">3. E a Receita Federal?</p>
             <p className="text-blue-100 text-[11px] leading-relaxed">
-              A Receita Federal recebe os dados no <strong>final do mês</strong>, quando seu contador importa os XMLs do Spedy e apura o <strong>Simples Nacional (PGDAS-D)</strong> para gerar sua guia DAS.
+              A Receita Federal recebe os dados no <strong>final do mês</strong>, quando seu contador importa os XMLs do TributoFlow e apura o <strong>Simples Nacional (PGDAS-D)</strong> para gerar sua guia DAS.
             </p>
           </div>
         </div>
 
         <div className="pt-1 text-[11px] text-blue-200 border-t border-white/10 flex items-center justify-between">
-          <span>O Spedy cuida de toda a assinatura e envio com a prefeitura automaticamente usando seu <strong>Certificado Digital A1</strong>.</span>
+          <span>O TributoFlow cuida de toda a assinatura e envio com a prefeitura automaticamente usando seu <strong>Certificado Digital A1</strong>.</span>
+        </div>
+      </div>
+
+      {/* Dados da Empresa Summary Card matching user print */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center border border-purple-200">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-bold text-slate-800 text-base">Dados da Empresa</h2>
+              <p className="text-xs text-slate-500">Informações cadastrais e fiscais da pessoa jurídica emissora</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsCompanyModalOpen(true)}
+            className="px-4 py-2 rounded-full bg-[#2c0853] hover:bg-[#3d0b72] text-white font-semibold text-xs transition-colors flex items-center gap-1.5 shadow-sm"
+          >
+            <span>Editar Dados da Empresa</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 text-xs">
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Razão Social & Fantasia</span>
+            <p className="font-bold text-slate-900">{company.corporateName}</p>
+            <p className="text-slate-600 font-medium">{company.tradeName || 'CAMPEAO NEGOCIOS DIGITIAS'}</p>
+            <p className="text-slate-500 text-[11px]">CNPJ: {company.cnpj}</p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Regimes e Inscrições</span>
+            <p className="font-bold text-slate-900">CRT: {company.crt || 'Simples Nacional'}</p>
+            <p className="text-slate-600 text-[11px] truncate" title={company.specialRegime}>
+              {company.specialRegime || 'Microempresário e Empresa de Pequeno Porte (ME EPP)'}
+            </p>
+            <p className="text-slate-500 text-[11px]">Insc. Estadual: {company.stateRegistration || '264108787'}</p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400">Endereço & Contato</span>
+            <p className="font-bold text-slate-900">
+              {company.address?.street}, {company.address?.number}
+            </p>
+            <p className="text-slate-600 text-[11px]">
+              {company.address?.neighborhood} - {company.address?.city}/{company.address?.state} - CEP {company.address?.zipCode}
+            </p>
+            <p className="text-slate-500 text-[11px] truncate">
+              {company.email || 'campeao.mkt.user@gmail.com'} • {company.mobile || '(69) 99265-3785'}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -157,7 +210,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="font-bold text-slate-800 text-base">Regime Tributário Vigente</h2>
-            <p className="text-xs text-slate-500">O Spedy calcula a retenção e alíquota de cada venda de acordo com esta escolha</p>
+            <p className="text-xs text-slate-500">O TributoFlow calcula a retenção e alíquota de cada venda de acordo com esta escolha</p>
           </div>
         </div>
 
