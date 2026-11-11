@@ -16,6 +16,7 @@ import { DanfeModal } from './components/DanfeModal';
 import { IntegrationModal } from './components/IntegrationModal';
 import { SimulatorModal } from './components/SimulatorModal';
 import { CompanySettingsModal } from './components/CompanySettingsModal';
+import { SoapLogsModal } from './components/SoapLogsModal';
 
 const MainLayout: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -23,6 +24,8 @@ const MainLayout: React.FC = () => {
     currentView, 
     selectedInvoiceForDanfe, 
     setSelectedInvoiceForDanfe,
+    selectedInvoiceForSoapLogs,
+    setSelectedInvoiceForSoapLogs,
     selectedPlatformForModal,
     setSelectedPlatformForModal,
     isSimulatorOpen,
@@ -33,7 +36,7 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-[#f8f9fc] overflow-hidden text-slate-800 font-sans">
-      {/* Sidebar with Spedy branding */}
+      {/* Sidebar with TributoFlow branding */}
       <Sidebar 
         collapsed={sidebarCollapsed} 
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} 
@@ -84,6 +87,14 @@ const MainLayout: React.FC = () => {
       {isCompanyModalOpen && (
         <CompanySettingsModal
           onClose={() => setIsCompanyModalOpen(false)}
+        />
+      )}
+
+      {/* Direct Municipal SOAP Logs & XMLDSig Modal */}
+      {selectedInvoiceForSoapLogs && (
+        <SoapLogsModal
+          invoice={selectedInvoiceForSoapLogs}
+          onClose={() => setSelectedInvoiceForSoapLogs(null)}
         />
       )}
     </div>

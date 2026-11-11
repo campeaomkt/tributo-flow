@@ -5,7 +5,9 @@ import {
   Sale, 
   FiscalInvoice, 
   MonthlyClosing, 
-  PlatformId 
+  PlatformId,
+  MunicipalProvider,
+  FiscalEnvironment 
 } from '../types';
 import { 
   initialCompanySettings, 
@@ -14,6 +16,7 @@ import {
   initialMonthlyClosings 
 } from '../services/mockData';
 import { calculateTaxes } from '../services/taxCalculator';
+import { transmitDirectToPrefeitura, DirectTransmissionResult } from '../services/directTransmitter';
 
 interface DateFilter {
   start: string;
@@ -39,12 +42,19 @@ interface FiscalContextType {
   setIsSimulatorOpen: (open: boolean) => void;
   isCompanyModalOpen: boolean;
   setIsCompanyModalOpen: (open: boolean) => void;
+  selectedInvoiceForSoapLogs: FiscalInvoice | null;
+  setSelectedInvoiceForSoapLogs: (inv: FiscalInvoice | null) => void;
   
   // Actions
   updateCompany: (settings: Partial<CompanySettings>) => void;
   updatePlatform: (platformId: PlatformId, config: Partial<PlatformConfig>) => void;
   emitInvoice: (invoiceId: string) => void;
   emitBatchInvoices: (invoiceIds: string[]) => void;
+  transmitInvoiceDirect: (
+    invoiceId: string, 
+    provider?: MunicipalProvider, 
+    environment?: FiscalEnvironment
+  ) => Promise<DirectTransmissionResult>;
   cancelInvoice: (invoiceId: string, reason: string) => void;
   simulateSale: (saleInput: {
     platform: PlatformId;
@@ -109,6 +119,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
 
   const [selectedInvoiceForDanfe, setSelectedInvoiceForDanfe] = useState<FiscalInvoice | null>(null);
+  const [selectedInvoiceForSoapLogs, setSelectedInvoiceForSoapLogs] = useState<FiscalInvoice | null>(null);
   const [selectedPlatformForModal, setSelectedPlatformForModal] = useState<PlatformConfig | null>(null);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState<boolean>(false);
@@ -198,6 +209,53 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const emitBatchInvoices = (invoiceIds: string[]) => {
     invoiceIds.forEach(id => emitInvoice(id));
+  };
+
+  const transmitInvoiceDirect = async (
+    invoiceId: string, 
+    provider: MunicipalProvider = company.municipalProvider || 'BETHA',
+    environment: FiscalEnvironment = company.fiscalEnvironment || 'PRODUCAO'
+  ): Promise<DirectTransmissionResult> => {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv) throw new Error('Nota fiscal não encontrada.');
+
+    const result = await transmitDirectToPrefeitura(inv, company, provider, environment);
+
+    setInvoices(prev =>
+      prev.map(i => {
+        if (i.id !== invoiceId) return i;
+        return {
+          ...i,
+          status: 'EMITIDA',
+          issuedAt: result.authorizedAt,
+          transmissionMode: 'DIRETO_PREFEITURA',
+          municipalProvider: provider,
+          municipalProtocol: result.municipalProtocol,
+          officialInvoiceNumber: result.officialNumber,
+          municipalAuthCode: result.municipalAuthCode,
+          municipalUrl: result.municipalUrl,
+          authorizedAt: result.authorizedAt,
+          soapRequestXml: result.soapRequestXml,
+          soapResponseXml: result.soapResponseXml,
+          signedXml: result.signedXml,
+          verificationCode: result.municipalAuthCode,
+          number: result.officialNumber.replace('/', ''),
+          scheduledFor: undefined,
+          emailSent: true,
+        };
+      })
+    );
+
+    setSales(prev =>
+      prev.map(s => {
+        if (s.invoiceId === invoiceId) {
+          return { ...s, invoiceStatus: 'EMITIDA' };
+        }
+        return s;
+      })
+    );
+
+    return result;
   };
 
   const cancelInvoice = (invoiceId: string, reason: string) => {
@@ -491,6 +549,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setDateFilter,
         selectedInvoiceForDanfe,
         setSelectedInvoiceForDanfe,
+        selectedInvoiceForSoapLogs,
+        setSelectedInvoiceForSoapLogs,
         selectedPlatformForModal,
         setSelectedPlatformForModal,
         isSimulatorOpen,
@@ -501,6 +561,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         updatePlatform,
         emitInvoice,
         emitBatchInvoices,
+        transmitInvoiceDirect,
         cancelInvoice,
         simulateSale,
         simulateRefund,

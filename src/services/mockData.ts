@@ -12,6 +12,8 @@ export const initialCompanySettings: CompanySettings = {
   email: 'campeao.mkt.user@gmail.com',
   phone: '(69) 9265-3785',
   mobile: '(69) 99265-3785',
+  municipalProvider: 'BETHA',
+  fiscalEnvironment: 'PRODUCAO',
   taxRegime: 'SIMPLES_NACIONAL',
   simplesAnexo: 'ANEXO_III',
   fatorRActive: true,
@@ -265,6 +267,13 @@ export function generateInitialInvoices(): { sales: Sale[]; invoices: FiscalInvo
       csllAmount: 0.10,
     },
     emailSent: true,
+    transmissionMode: 'DIRETO_PREFEITURA',
+    municipalProvider: 'BETHA',
+    municipalProtocol: 'PROTOCOLO-BET-2026114201007',
+    officialInvoiceNumber: '2026/00018',
+    municipalAuthCode: 'VER-KW78-AEVO',
+    municipalUrl: 'https://e-gov.betha.com.br/e-nota/consulta?cod=VER-KW78-AEVO&mun=4201007',
+    authorizedAt: '2026-11-10 15:10:00',
   };
 
   return { sales: [realSale], invoices: [realInvoice] };

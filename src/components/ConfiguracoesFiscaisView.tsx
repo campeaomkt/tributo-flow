@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useFiscal } from '../context/FiscalContext';
-import { TaxRegime } from '../types';
+import { TaxRegime, MunicipalProvider, FiscalEnvironment } from '../types';
 import { 
   Building2, 
   ShieldCheck, 
@@ -17,7 +17,9 @@ import {
   Eye,
   EyeOff,
   Lock,
-  KeyRound
+  KeyRound,
+  Zap,
+  Server
 } from 'lucide-react';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
@@ -36,6 +38,8 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [municipalRegistration, setMunicipalRegistration] = useState(company.municipalRegistration);
   const [accountantName, setAccountantName] = useState(company.accountantName);
   const [accountantEmail, setAccountantEmail] = useState(company.accountantEmail);
+  const [municipalProvider, setMunicipalProvider] = useState<MunicipalProvider>(company.municipalProvider || 'BETHA');
+  const [fiscalEnvironment, setFiscalEnvironment] = useState<FiscalEnvironment>(company.fiscalEnvironment || 'PRODUCAO');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
@@ -131,6 +135,8 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
       municipalRegistration,
       accountantName,
       accountantEmail,
+      municipalProvider,
+      fiscalEnvironment,
     });
 
     setSavedSuccess(true);
@@ -468,8 +474,89 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
               placeholder="Ex: 2.9"
             />
             <span className="text-[10px] text-slate-400 mt-1 block">
-              São Paulo geralmente aplica entre 2,0% e 2,9%
+              Anitápolis/SC geralmente aplica 2,0% a 2,5% pelo Simples Nacional
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Motor de Transmissão Direta com a Prefeitura (Sem Intermediários) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200">
+              <Zap className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-slate-800 text-base">Motor de Transmissão Municipal Direta</h2>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
+                  Sem Intermediários
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Transmissão direta do RPS assinado via WebService SOAP com a prefeitura, sem mensalidades de terceiros (Focus NFe, PlugNotas, etc.)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              Provedor do WebService Municipal
+            </label>
+            <select
+              value={municipalProvider}
+              onChange={e => setMunicipalProvider(e.target.value as MunicipalProvider)}
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
+            >
+              <option value="BETHA">Betha Sistemas (ABRASF v2.02 - Anitápolis/SC e 80+ municípios)</option>
+              <option value="IPM">IPM Sistemas (Atende.net / Santa Catarina)</option>
+              <option value="PADRAO_NACIONAL">Portal Nacional NFS-e (Receita Federal / DPS Nacional)</option>
+            </select>
+            <span className="text-[10px] text-slate-400 mt-1 block">
+              Anitápolis - SC utiliza o WebService Betha Sistemas com layout ABRASF v2.02
+            </span>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              Ambiente de Emissão
+            </label>
+            <select
+              value={fiscalEnvironment}
+              onChange={e => setFiscalEnvironment(e.target.value as FiscalEnvironment)}
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
+            >
+              <option value="PRODUCAO">Produção (Ambiente Oficial da Prefeitura - Gera NFS-e Válida)</option>
+              <option value="HOMOLOGACAO">Homologação (Ambiente de Testes sem Valor Fiscal)</option>
+            </select>
+            <span className="text-[10px] text-slate-400 mt-1 block">
+              Em produção, cada nota autorizada gera o número oficial e código de autenticidade da prefeitura
+            </span>
+          </div>
+        </div>
+
+        {/* Technical specs of autonomous engine */}
+        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-slate-400 uppercase font-bold">Endpoint SOAP WSDL</span>
+            <p className="font-mono text-[11px] font-semibold text-purple-900 truncate" title="https://e-gov.betha.com.br/e-nota-contribuinte-ws/consultarLoteRps?wsdl">
+              e-gov.betha.com.br/e-nota-contribuinte-ws
+            </p>
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-slate-400 uppercase font-bold">Assinatura Digital</span>
+            <p className="font-semibold text-slate-800">
+              XMLDSig RSA-SHA1 (Digest C14N)
+            </p>
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-slate-400 uppercase font-bold">Custo de Transmissão</span>
+            <p className="font-bold text-emerald-700">
+              R$ 0,00 (100% Autônomo)
+            </p>
           </div>
         </div>
       </div>

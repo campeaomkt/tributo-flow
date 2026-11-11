@@ -101,6 +101,9 @@ export interface TaxBreakdown {
   inssRetained?: number;
 }
 
+export type MunicipalProvider = 'BETHA' | 'IPM' | 'PADRAO_NACIONAL';
+export type FiscalEnvironment = 'HOMOLOGACAO' | 'PRODUCAO';
+
 export interface FiscalInvoice {
   id: string;
   number: string; // e.g. "20260000412"
@@ -128,6 +131,17 @@ export interface FiscalInvoice {
   pdfUrl?: string;
   municipalAuthUrl?: string;
   emailSent: boolean;
+  // Direct Municipal Transmission Data
+  transmissionMode?: 'DIRETO_PREFEITURA' | 'MANUAL';
+  municipalProvider?: MunicipalProvider;
+  municipalProtocol?: string;
+  officialInvoiceNumber?: string;
+  municipalAuthCode?: string;
+  municipalUrl?: string;
+  authorizedAt?: string;
+  soapRequestXml?: string;
+  soapResponseXml?: string;
+  signedXml?: string;
 }
 
 export interface CompanySettings {
@@ -142,6 +156,9 @@ export interface CompanySettings {
   email: string; // "campeao.mkt.user@gmail.com"
   phone: string; // "(69) 9265-3785"
   mobile: string; // "(69) 99265-3785"
+  municipalProvider?: MunicipalProvider;
+  fiscalEnvironment?: FiscalEnvironment;
+  municipalWsUrl?: string;
   taxRegime: TaxRegime;
   simplesAnexo: 'ANEXO_I' | 'ANEXO_III' | 'ANEXO_V';
   fatorRActive: boolean;

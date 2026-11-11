@@ -14,7 +14,13 @@ import {
   Calendar,
   Filter,
   CheckSquare,
-  Square
+  Square,
+  ShieldCheck,
+  Zap,
+  Code2,
+  Check,
+  Loader2,
+  ExternalLink
 } from 'lucide-react';
 import { downloadFile } from '../services/exportService';
 import { generateNfseXml } from '../services/taxCalculator';
@@ -24,9 +30,11 @@ export const NotasFiscaisView: React.FC = () => {
     invoices, 
     emitInvoice, 
     emitBatchInvoices, 
+    transmitInvoiceDirect,
     cancelInvoice, 
     company, 
-    setSelectedInvoiceForDanfe 
+    setSelectedInvoiceForDanfe,
+    setSelectedInvoiceForSoapLogs,
   } = useFiscal();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,6 +43,8 @@ export const NotasFiscaisView: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [cancelModalInvoice, setCancelModalInvoice] = useState<FiscalInvoice | null>(null);
   const [cancelReason, setCancelReason] = useState('Cancelamento solicitado pelo cliente');
+  const [transmittingId, setTransmittingId] = useState<string | null>(null);
+  const [transmissionSuccessMsg, setTransmissionSuccessMsg] = useState<string | null>(null);
 
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = 
@@ -79,6 +89,33 @@ export const NotasFiscaisView: React.FC = () => {
     setSelectedIds([]);
   };
 
+  const handleDirectTransmit = async (invoiceId: string) => {
+    setTransmittingId(invoiceId);
+    try {
+      const res = await transmitInvoiceDirect(invoiceId);
+      setTransmissionSuccessMsg(`NFS-e autorizada pela Prefeitura de Anitápolis/SC (Betha)! Protocolo: ${res.municipalProtocol} • Cód: ${res.municipalAuthCode}`);
+      setTimeout(() => setTransmissionSuccessMsg(null), 5000);
+      const updatedInv = invoices.find(i => i.id === invoiceId);
+      if (updatedInv) {
+        setSelectedInvoiceForSoapLogs({
+          ...updatedInv,
+          status: 'EMITIDA',
+          municipalProtocol: res.municipalProtocol,
+          officialInvoiceNumber: res.officialNumber,
+          municipalAuthCode: res.municipalAuthCode,
+          municipalUrl: res.municipalUrl,
+          soapRequestXml: res.soapRequestXml,
+          soapResponseXml: res.soapResponseXml,
+          signedXml: res.signedXml,
+        });
+      }
+    } catch (err: any) {
+      alert(`Falha na transmissão direta: ${err.message || 'Erro desconhecido'}`);
+    } finally {
+      setTransmittingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* Header */}
@@ -111,6 +148,56 @@ export const NotasFiscaisView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Direct Municipal Transmission Active Engine Banner */}
+      <div className="bg-gradient-to-r from-slate-900 via-purple-950 to-indigo-950 text-white rounded-2xl p-4 sm:p-5 shadow-sm border border-purple-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-bold text-sm text-white">Transmissor Municipal Direto Autônomo</h3>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/40">
+                ● Conectado à Betha Sistemas (Anitápolis - SC)
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 font-semibold text-[10px] border border-purple-400/30">
+                Sem API Intermediária / Sem Custo por Nota
+              </span>
+            </div>
+            <p className="text-xs text-purple-200 mt-1 leading-relaxed">
+              Assinatura digital XMLDSig com chave privada do Certificado A1 (<strong className="text-white">CNPJ 40.731.222/0001-07</strong>). Envio em lote RPS via SOAP WebService ABRASF v2.02 diretamente aos servidores da Prefeitura.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-stretch md:self-auto shrink-0 text-xs">
+          <div className="px-3 py-1.5 rounded-xl bg-white/10 text-slate-200 border border-white/10 text-center">
+            <span className="text-[10px] text-purple-300 uppercase block font-bold">Ambiente</span>
+            <span className="font-bold text-emerald-300">PRODUÇÃO</span>
+          </div>
+          <div className="px-3 py-1.5 rounded-xl bg-white/10 text-slate-200 border border-white/10 text-center">
+            <span className="text-[10px] text-purple-300 uppercase block font-bold">Padrão XML</span>
+            <span className="font-bold text-white">ABRASF 2.02</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Success alert toast if transmitted */}
+      {transmissionSuccessMsg && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2">
+            <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{transmissionSuccessMsg}</span>
+          </div>
+          <button 
+            onClick={() => setTransmissionSuccessMsg(null)}
+            className="text-emerald-700 hover:text-emerald-900 text-xs font-bold"
+          >
+            Dispensar
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs">
@@ -208,8 +295,13 @@ export const NotasFiscaisView: React.FC = () => {
                         />
                       </td>
                       <td className="px-4 py-3.5 font-mono">
-                        <span className="font-bold text-purple-900 block">#{inv.number}</span>
-                        <span className="text-[10px] text-slate-400">RPS: {inv.rpsNumber}</span>
+                        <span className="font-bold text-purple-900 block">#{inv.officialInvoiceNumber || inv.number}</span>
+                        <span className="text-[10px] text-slate-400 block">RPS: {inv.rpsNumber}</span>
+                        {inv.status === 'EMITIDA' && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-purple-50 text-purple-800 border border-purple-200 mt-1">
+                            🏛️ Betha (Anitápolis/SC)
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5 text-slate-600 whitespace-nowrap">
                         {inv.status === 'PENDENTE' && inv.scheduledFor ? (
@@ -251,14 +343,39 @@ export const NotasFiscaisView: React.FC = () => {
                           {inv.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 text-right whitespace-nowrap space-x-2">
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap space-x-1.5">
                         {inv.status === 'PENDENTE' && (
+                          <>
+                            <button
+                              onClick={() => handleDirectTransmit(inv.id)}
+                              disabled={transmittingId === inv.id}
+                              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-xs disabled:opacity-50"
+                              title="Transmitir direto para a Prefeitura de Anitápolis/SC (Betha Sistemas) sem custo de API"
+                            >
+                              {transmittingId === inv.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Zap className="w-3 h-3 text-amber-300" />
+                              )}
+                              <span>Transmitir Direto</span>
+                            </button>
+                            <button
+                              onClick={() => emitInvoice(inv.id)}
+                              className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-[11px]"
+                              title="Emitir internamente"
+                            >
+                              Emitir
+                            </button>
+                          </>
+                        )}
+                        {inv.status === 'EMITIDA' && (
                           <button
-                            onClick={() => emitInvoice(inv.id)}
-                            className="px-2.5 py-1 rounded bg-[#2c0853] hover:bg-[#3d0b72] text-white font-semibold text-[11px]"
-                            title="Emitir agora"
+                            onClick={() => setSelectedInvoiceForSoapLogs(inv)}
+                            className="px-2.5 py-1 rounded border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-[11px] inline-flex items-center gap-1"
+                            title="Ver Envelopes SOAP de Envio e Retorno da Prefeitura (Betha Sistemas)"
                           >
-                            Emitir
+                            <Code2 className="w-3 h-3 text-purple-700" />
+                            <span>Logs SOAP</span>
                           </button>
                         )}
                         <button

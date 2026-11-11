@@ -13,7 +13,8 @@ import {
   ShieldCheck, 
   QrCode,
   FileCode,
-  ExternalLink
+  ExternalLink,
+  Code2
 } from 'lucide-react';
 
 interface DanfeModalProps {
@@ -22,7 +23,7 @@ interface DanfeModalProps {
 }
 
 export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
-  const { company } = useFiscal();
+  const { company, setSelectedInvoiceForSoapLogs } = useFiscal();
   const [copiedKey, setCopiedKey] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [showXmlView, setShowXmlView] = useState(false);
@@ -73,6 +74,14 @@ export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
 
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setSelectedInvoiceForSoapLogs(invoice)}
+              className="px-3 py-1.5 rounded-lg bg-purple-950/80 hover:bg-purple-900 text-purple-200 text-xs font-semibold flex items-center gap-1.5 transition-colors border border-purple-700/50"
+              title="Inspecionar Envelopes SOAP e Assinatura Digital XMLDSig"
+            >
+              <Code2 className="w-3.5 h-3.5 text-purple-300" />
+              <span>Logs SOAP (Betha)</span>
+            </button>
+            <button
               onClick={() => setShowXmlView(!showXmlView)}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
             >
@@ -114,23 +123,23 @@ export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
               {/* Header Municipal */}
               <div className="border-b border-slate-300 pb-3 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-300 flex items-center justify-center font-bold text-slate-600">
-                    SP
+                  <div className="w-12 h-12 rounded-lg bg-purple-50 border border-purple-200 flex items-center justify-center font-bold text-purple-900">
+                    SC
                   </div>
                   <div>
                     <h2 className="font-extrabold text-sm uppercase tracking-wide">
-                      Prefeitura do Município de São Paulo
+                      Prefeitura Municipal de {company.address?.city || 'Anitápolis'} - {company.address?.state || 'SC'}
                     </h2>
-                    <p className="text-[11px] text-slate-600">Secretaria Municipal da Fazenda</p>
+                    <p className="text-[11px] text-slate-600">Secretaria Municipal de Finanças e Tributação • Betha Sistemas</p>
                     <p className="text-[10px] font-bold text-purple-900 uppercase">
-                      Nota Fiscal Eletrônica de Serviços - NFS-e
+                      Nota Fiscal Eletrônica de Serviços - NFS-e (Padrão ABRASF)
                     </p>
                   </div>
                 </div>
 
                 <div className="text-right border-l border-slate-300 pl-4 font-mono">
                   <p className="text-[10px] text-slate-500 uppercase">Número da Nota</p>
-                  <p className="text-base font-extrabold text-slate-900">{invoice.number}</p>
+                  <p className="text-base font-extrabold text-slate-900">{invoice.officialInvoiceNumber || invoice.number}</p>
                   <p className="text-[10px] text-slate-500">Data e Hora de Emissão</p>
                   <p className="text-[11px] font-bold">{invoice.issuedAt}</p>
                   <p className="text-[10px] text-slate-500">Código de Verificação</p>
@@ -285,9 +294,13 @@ export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
               {/* QR Code and Authenticity Verification Footer */}
               <div className="flex items-center justify-between border-t border-slate-300 pt-2 text-[10px] text-slate-500">
                 <div className="space-y-0.5">
-                  <p>Consulte a autenticidade deste documento acessando o site da Prefeitura:</p>
-                  <p className="font-mono text-purple-700">https://nfe.prefeitura.sp.gov.br/verificacao</p>
-                  <p className="font-mono">Chave: {invoice.accessKey}</p>
+                  <p>Consulte a autenticidade deste documento acessando o Portal Betha da Prefeitura de Anitápolis/SC:</p>
+                  <p className="font-mono text-purple-700">
+                    {invoice.municipalUrl || `https://e-gov.betha.com.br/e-nota/consulta?cod=${invoice.verificationCode}&mun=4201007`}
+                  </p>
+                  <p className="font-mono text-slate-600">
+                    Protocolo Municipal: <strong>{invoice.municipalProtocol || 'PROTOCOLO-BET-2026114201007'}</strong> • Chave: {invoice.accessKey}
+                  </p>
                 </div>
                 <div className="w-14 h-14 bg-slate-100 border border-slate-300 rounded flex items-center justify-center font-mono text-[9px] text-center">
                   [QR-CODE]
