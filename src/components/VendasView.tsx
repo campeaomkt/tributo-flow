@@ -10,8 +10,11 @@ import {
   Zap,
   ArrowRight,
   RefreshCw,
-  Check
+  Check,
+  Edit3
 } from 'lucide-react';
+import { EditSaleModal } from './EditSaleModal';
+import { Sale } from '../types';
 
 export const VendasView: React.FC = () => {
   const { 
@@ -26,6 +29,7 @@ export const VendasView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'approved' | 'refunded'>('ALL');
   const [syncToast, setSyncToast] = useState<string | null>(null);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
 
   const handleSyncKiwify = () => {
     const count = syncKiwifySales();
@@ -88,11 +92,11 @@ export const VendasView: React.FC = () => {
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
             <span className="font-bold text-sm text-emerald-200">Kiwify Integrada com Sucesso</span>
             <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
-              {sales.length} Vendas Contabilizadas
+              {sales.length} {sales.length === 1 ? 'Venda Contabilizada' : 'Vendas Contabilizadas'}
             </span>
           </div>
           <p className="text-slate-300 text-[11px] mt-1">
-            Total Faturado: <strong className="text-white">R$ {(sales.length * 37.90).toFixed(2).replace('.', ',')}</strong> • Produto: <strong>Pacote de Timbres - Aevo Pro 2.0</strong> • Última venda: <strong>11/11/2026 13:14 (FBCN0ZT)</strong>
+            Total Faturado: <strong className="text-white">R$ {sales.reduce((acc, s) => acc + s.amount, 0).toFixed(2).replace('.', ',')}</strong> • Produto: <strong>Pacote de Timbres - Aevo Pro 2.0</strong> • Última venda: <strong>{sales.length > 0 ? `${sales[0].createdAt.slice(0, 16)} (${sales[0].externalSaleId})` : 'Nenhuma'}</strong>
           </p>
         </div>
         <div className="text-right shrink-0">
@@ -218,7 +222,16 @@ export const VendasView: React.FC = () => {
                         <span className="text-slate-400 text-[10px]">Não gerada</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <td className="px-4 py-3 text-right whitespace-nowrap space-x-1.5">
+                      <button
+                        onClick={() => setEditingSale(sale)}
+                        className="px-2.5 py-1 rounded border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-900 font-semibold text-[11px] inline-flex items-center gap-1 transition-colors"
+                        title="Ajustar valor real, Order Bump ou colar JSON da Kiwify"
+                      >
+                        <Edit3 className="w-3 h-3 text-purple-600" />
+                        <span>Editar / Order Bump</span>
+                      </button>
+
                       {sale.status === 'approved' ? (
                         <button
                           onClick={() => {
@@ -242,6 +255,14 @@ export const VendasView: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Edit Sale & Order Bump Modal */}
+      {editingSale && (
+        <EditSaleModal
+          sale={editingSale}
+          onClose={() => setEditingSale(null)}
+        />
+      )}
     </div>
   );
 };

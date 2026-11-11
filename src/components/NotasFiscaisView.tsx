@@ -20,14 +20,18 @@ import {
   Code2,
   Check,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Edit3
 } from 'lucide-react';
 import { downloadFile } from '../services/exportService';
 import { generateNfseXml } from '../services/taxCalculator';
+import { EditSaleModal } from './EditSaleModal';
+import { Sale } from '../types';
 
 export const NotasFiscaisView: React.FC = () => {
   const { 
     invoices, 
+    sales,
     emitInvoice, 
     emitBatchInvoices, 
     transmitInvoiceDirect,
@@ -45,6 +49,7 @@ export const NotasFiscaisView: React.FC = () => {
   const [cancelReason, setCancelReason] = useState('Cancelamento solicitado pelo cliente');
   const [transmittingId, setTransmittingId] = useState<string | null>(null);
   const [transmissionSuccessMsg, setTransmissionSuccessMsg] = useState<string | null>(null);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
 
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = 
@@ -379,6 +384,16 @@ export const NotasFiscaisView: React.FC = () => {
                           </button>
                         )}
                         <button
+                          onClick={() => {
+                            const foundSale = sales.find(s => s.invoiceId === inv.id || s.id === inv.saleId);
+                            if (foundSale) setEditingSale(foundSale);
+                          }}
+                          className="px-2 py-1 rounded text-purple-700 hover:bg-purple-50 text-[11px] font-medium"
+                          title="Ajustar valor real com Order Bump ou colar JSON da Kiwify"
+                        >
+                          Editar
+                        </button>
+                        <button
                           onClick={() => setSelectedInvoiceForDanfe(inv)}
                           className="px-2.5 py-1 rounded border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-[11px]"
                           title="Visualizar DANFSE"
@@ -454,6 +469,14 @@ export const NotasFiscaisView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit Sale & Order Bump Modal */}
+      {editingSale && (
+        <EditSaleModal
+          sale={editingSale}
+          onClose={() => setEditingSale(null)}
+        />
       )}
     </div>
   );

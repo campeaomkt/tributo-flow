@@ -68,6 +68,13 @@ interface FiscalContextType {
   simulateRefund: (saleId: string) => void;
   processKiwifyWebhook: (payload: any) => void;
   syncKiwifySales: () => number;
+  updateSaleAndInvoice: (saleId: string, updates: {
+    amount?: number;
+    productName?: string;
+    customerName?: string;
+    customerDoc?: string;
+    customerEmail?: string;
+  }) => void;
   closeMonth: (year: number, month: number) => void;
   resetToDefault: () => void;
 }
@@ -75,16 +82,19 @@ interface FiscalContextType {
 const FiscalContext = createContext<FiscalContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  COMPANY: 'tributoflow_company_v6',
-  PLATFORMS: 'tributoflow_platforms_v6',
-  SALES: 'tributoflow_sales_v6',
-  INVOICES: 'tributoflow_invoices_v6',
-  CLOSINGS: 'tributoflow_closings_v6',
+  COMPANY: 'tributoflow_company_v7',
+  PLATFORMS: 'tributoflow_platforms_v7',
+  SALES: 'tributoflow_sales_v7',
+  INVOICES: 'tributoflow_invoices_v7',
+  CLOSINGS: 'tributoflow_closings_v7',
 };
 
 export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [company, setCompany] = useState<CompanySettings>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.COMPANY) || localStorage.getItem('tributoflow_company_v5');
+    const saved = 
+      localStorage.getItem(STORAGE_KEYS.COMPANY) || 
+      localStorage.getItem('tributoflow_company_v6') || 
+      localStorage.getItem('tributoflow_company_v5');
     return saved ? JSON.parse(saved) : initialCompanySettings;
   });
 
@@ -96,15 +106,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [sales, setSales] = useState<Sale[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SALES);
     if (saved) {
-      const parsed = JSON.parse(saved);
-      // Auto-merge if user had older single-sale session
-      if (Array.isArray(parsed) && parsed.length < 11) {
-        const { sales: defaultSales } = generateInitialInvoices();
-        const existingIds = new Set(parsed.map(s => s.externalSaleId));
-        const missing = defaultSales.filter(s => !existingIds.has(s.externalSaleId));
-        return [...missing, ...parsed];
-      }
-      return parsed;
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
     }
     const { sales } = generateInitialInvoices();
     return sales;
@@ -113,14 +117,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.INVOICES);
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length < 11) {
-        const { invoices: defaultInvoices } = generateInitialInvoices();
-        const existingIds = new Set(parsed.map(i => i.saleId));
-        const missing = defaultInvoices.filter(i => !existingIds.has(i.saleId));
-        return [...missing, ...parsed];
-      }
-      return parsed;
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
     }
     const { invoices } = generateInitialInvoices();
     return invoices;
@@ -415,32 +414,56 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const order = payload.order || payload;
       const orderId = order.order_id || `KW-${Date.now()}`;
-
-      // Check if already processed
-      if (sales.some(s => s.externalSaleId === orderId || s.externalSaleId === order.order_ref)) {
-        return;
-      }
+      const orderRef = order.order_ref || orderId;
 
       const platformConfig = platforms.find(p => p.id === 'kiwify');
       const isApproved = order.order_status === 'paid' || order.webhook_event_type === 'order_approved';
       const isRefunded = order.order_status === 'refunded' || order.webhook_event_type === 'order_refunded';
 
       if (isRefunded) {
-        const existingSale = sales.find(s => s.externalSaleId === orderId || s.externalSaleId === order.order_ref);
+        const existingSale = sales.find(s => s.externalSaleId === orderId || s.externalSaleId === orderRef);
         if (existingSale) {
           simulateRefund(existingSale.id);
         }
         return;
       }
 
-      const productName = order.Product?.product_name || 'Produto Kiwify';
+      // Extract main product name
+      const mainProductName = order.Product?.product_name || 'Pacote de Timbres - Aevo Pro 2.0';
+
+      // Extract Order Bumps from various possible Kiwify payload formats
+      const bumps = Array.isArray(order.order_bump) 
+        ? order.order_bump 
+        : Array.isArray(order.OrderBump)
+        ? order.OrderBump
+        : Array.isArray(order.bumps)
+        ? order.bumps
+        : Array.isArray(order.items)
+        ? order.items.filter((it: any) => it.product_id !== order.Product?.product_id)
+        : [];
+
+      const bumpNames = bumps
+        .map((b: any) => b.product_name || b.name || b.title)
+        .filter(Boolean);
+
+      const fullProductName = bumpNames.length > 0 
+        ? `${mainProductName} + Order Bump: ${bumpNames.join(', ')}`
+        : mainProductName;
+
       const customerName = order.Customer?.full_name || order.Customer?.first_name || 'Cliente Kiwify';
       const customerDoc = order.Customer?.CPF || order.Customer?.cnpj || '000.000.000-00';
       const customerEmail = order.Customer?.email || 'cliente@kiwify.com.br';
       
-      // Amount in Kiwify comes in cents (e.g. 3790 = R$ 37.90)
-      const rawCharge = order.Commissions?.charge_amount || order.Commissions?.product_base_price || 3790;
-      const amount = typeof rawCharge === 'number' && rawCharge > 500 ? rawCharge / 100 : Number(rawCharge) || 37.90;
+      // Amount in Kiwify comes in cents (e.g. 3790 = R$ 37.90; 5780 = R$ 57.80 with bump)
+      const rawCharge = 
+        order.Commissions?.charge_amount ?? 
+        order.charge_amount ?? 
+        order.Commissions?.product_base_price ?? 
+        3790;
+      
+      const amount = typeof rawCharge === 'number' 
+        ? (rawCharge > 100 ? rawCharge / 100 : rawCharge) 
+        : parseFloat(rawCharge) || 37.90;
       
       const paymentMethod = order.payment_method === 'pix' ? 'PIX' : order.payment_method === 'boleto' ? 'BOLETO' : 'CARTAO_CREDITO';
       const now = new Date();
@@ -451,17 +474,62 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       warrantyDate.setDate(warrantyDate.getDate() + warrantyDays);
       const formattedWarranty = `${warrantyDate.getFullYear()}-${String(warrantyDate.getMonth() + 1).padStart(2, '0')}-${String(warrantyDate.getDate()).padStart(2, '0')} 23:59:59`;
 
+      // Check if sale already exists: UPDATE IT with the real Kiwify details!
+      const existingSale = sales.find(s => s.externalSaleId === orderId || s.externalSaleId === orderRef);
+      if (existingSale) {
+        setSales(prev =>
+          prev.map(s => {
+            if (s.id !== existingSale.id) return s;
+            return {
+              ...s,
+              productName: fullProductName,
+              amount: amount,
+              paymentMethod: paymentMethod,
+              paidAt: order.approved_date || s.paidAt,
+              customer: {
+                ...s.customer,
+                name: customerName,
+                document: customerDoc,
+                email: customerEmail,
+              },
+            };
+          })
+        );
+
+        const newTaxes = calculateTaxes(amount, company);
+        setInvoices(prev =>
+          prev.map(inv => {
+            if (inv.saleId !== existingSale.id) return inv;
+            return {
+              ...inv,
+              productName: fullProductName,
+              description: `Licenciamento e acesso a plataforma de conteúdo digital: ${fullProductName}`,
+              grossAmount: amount,
+              netAmount: amount - newTaxes.totalTax,
+              taxes: newTaxes,
+              customer: {
+                ...inv.customer,
+                name: customerName,
+                document: customerDoc,
+                email: customerEmail,
+              },
+            };
+          })
+        );
+        return;
+      }
+
       const saleId = `sale_kw_${Date.now()}`;
       const invId = `inv_kw_${Date.now()}`;
 
-      const isImmediate = platformConfig?.trigger === 'on_payment_approved';
-      const invStatus: 'EMITIDA' | 'PENDENTE' = isImmediate ? 'EMITIDA' : 'PENDENTE';
+      // Invoices remain PENDENTE until transmitted to the City Hall (Betha Sistemas)
+      const invStatus: 'EMITIDA' | 'PENDENTE' = 'PENDENTE';
 
       const newSale: Sale = {
         id: saleId,
-        externalSaleId: order.order_ref || orderId,
+        externalSaleId: orderRef,
         platform: 'kiwify',
-        productName,
+        productName: fullProductName,
         productId: order.Product?.product_id || 'prod_kw',
         amount,
         paymentMethod,
@@ -483,30 +551,30 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
 
       const taxes = calculateTaxes(amount, company);
-      const invoiceNum = (20260000500 + invoices.length).toString();
+      const invoiceNum = (20260000001 + invoices.length).toString();
 
       const newInvoice: FiscalInvoice = {
         id: invId,
         number: invoiceNum,
         series: '1',
-        rpsNumber: (8500 + invoices.length).toString(),
-        verificationCode: `VER-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+        rpsNumber: (8501 + invoices.length).toString(),
+        verificationCode: 'PENDENTE',
         accessKey: `352610${company.cnpj.replace(/\D/g, '')}5500100000${invoiceNum}100918231`,
         saleId: saleId,
         platform: 'kiwify',
         model: 'NFS-e',
         status: invStatus,
         issuedAt: formattedDate,
-        scheduledFor: isImmediate ? undefined : `${formattedWarranty} (Fim de Garantia)`,
+        scheduledFor: `${formattedWarranty} (Aguardando Transmissão)`,
         customer: newSale.customer,
-        productName,
-        description: `Licenciamento e acesso a plataforma de conteúdo digital: ${productName}`,
+        productName: fullProductName,
+        description: `Licenciamento e acesso a plataforma de conteúdo digital: ${fullProductName}`,
         serviceCode: company.serviceCode,
         cnae: company.cnaePrincipal,
         grossAmount: amount,
         netAmount: amount - taxes.totalTax,
         taxes,
-        emailSent: isImmediate && !!platformConfig?.sendEmailToCustomer,
+        emailSent: false,
       };
 
       setSales(prev => [newSale, ...prev]);
@@ -544,11 +612,59 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     updatePlatform('kiwify', {
       enabled: true,
-      totalSalesProcessed: 11,
-      lastSync: '11/11/2026 13:14',
+      totalSalesProcessed: Math.max(1, sales.length),
+      lastSync: new Date().toLocaleString('pt-BR'),
     });
 
     return addedCount;
+  };
+
+  const updateSaleAndInvoice = (saleId: string, updates: {
+    amount?: number;
+    productName?: string;
+    customerName?: string;
+    customerDoc?: string;
+    customerEmail?: string;
+  }) => {
+    setSales(prev =>
+      prev.map(s => {
+        if (s.id !== saleId) return s;
+        return {
+          ...s,
+          amount: updates.amount !== undefined ? updates.amount : s.amount,
+          productName: updates.productName || s.productName,
+          customer: {
+            ...s.customer,
+            name: updates.customerName || s.customer.name,
+            document: updates.customerDoc || s.customer.document,
+            email: updates.customerEmail || s.customer.email,
+          },
+        };
+      })
+    );
+
+    setInvoices(prev =>
+      prev.map(inv => {
+        if (inv.saleId !== saleId) return inv;
+        const newAmount = updates.amount !== undefined ? updates.amount : inv.grossAmount;
+        const newTaxes = calculateTaxes(newAmount, company);
+        const newProd = updates.productName || inv.productName;
+        return {
+          ...inv,
+          grossAmount: newAmount,
+          netAmount: newAmount - newTaxes.totalTax,
+          taxes: newTaxes,
+          productName: newProd,
+          description: `Licenciamento e acesso a plataforma de conteúdo digital: ${newProd}`,
+          customer: {
+            ...inv.customer,
+            name: updates.customerName || inv.customer.name,
+            document: updates.customerDoc || inv.customer.document,
+            email: updates.customerEmail || inv.customer.email,
+          },
+        };
+      })
+    );
   };
 
   const closeMonth = (year: number, month: number) => {
@@ -615,6 +731,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         simulateRefund,
         processKiwifyWebhook,
         syncKiwifySales,
+        updateSaleAndInvoice,
         closeMonth,
         resetToDefault,
       }}

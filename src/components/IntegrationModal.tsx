@@ -472,7 +472,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                     rows={4}
                     value={pastedJson}
                     onChange={e => setPastedJson(e.target.value)}
-                    placeholder='Cole aqui o JSON da requisição da Kiwify, ex: {"order": {"order_ref": "FBCN0ZT", "order_status": "paid", ...}}'
+                    placeholder='Cole aqui o JSON da requisição da Kiwify, ex: {"order": {"order_ref": "N2RK3OI", "order_status": "paid", ...}}'
                     className="w-full p-2 rounded-lg border border-purple-200 bg-white font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
                   />
                   <div className="flex items-center justify-between">

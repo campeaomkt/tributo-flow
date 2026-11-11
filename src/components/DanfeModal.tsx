@@ -138,12 +138,12 @@ export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
                 </div>
 
                 <div className="text-right border-l border-slate-300 pl-4 font-mono">
-                  <p className="text-[10px] text-slate-500 uppercase">Número da Nota</p>
-                  <p className="text-base font-extrabold text-slate-900">{invoice.officialInvoiceNumber || invoice.number}</p>
-                  <p className="text-[10px] text-slate-500">Data e Hora de Emissão</p>
+                  <p className="text-[10px] text-slate-500 uppercase">{invoice.status === 'EMITIDA' ? 'Número da Nota' : 'Recibo Provisório (RPS)'}</p>
+                  <p className="text-base font-extrabold text-slate-900">{invoice.status === 'EMITIDA' ? (invoice.officialInvoiceNumber || invoice.number) : `RPS ${invoice.rpsNumber}`}</p>
+                  <p className="text-[10px] text-slate-500">Data e Hora</p>
                   <p className="text-[11px] font-bold">{invoice.issuedAt}</p>
                   <p className="text-[10px] text-slate-500">Código de Verificação</p>
-                  <p className="text-[11px] font-bold text-purple-700">{invoice.verificationCode}</p>
+                  <p className="text-[11px] font-bold text-purple-700">{invoice.status === 'EMITIDA' ? invoice.verificationCode : 'Aguardando Transmissão'}</p>
                 </div>
               </div>
 
@@ -294,16 +294,30 @@ export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
               {/* QR Code and Authenticity Verification Footer */}
               <div className="flex items-center justify-between border-t border-slate-300 pt-2 text-[10px] text-slate-500">
                 <div className="space-y-0.5">
-                  <p>Consulte a autenticidade deste documento acessando o Portal Betha da Prefeitura de Anitápolis/SC:</p>
-                  <p className="font-mono text-purple-700">
-                    {invoice.municipalUrl || `https://e-gov.betha.com.br/e-nota/consulta?cod=${invoice.verificationCode}&mun=4201007`}
-                  </p>
-                  <p className="font-mono text-slate-600">
-                    Protocolo Municipal: <strong>{invoice.municipalProtocol || 'PROTOCOLO-BET-2026114201007'}</strong> • Chave: {invoice.accessKey}
-                  </p>
+                  {invoice.status === 'EMITIDA' ? (
+                    <>
+                      <p>Consulte a autenticidade deste documento acessando o Portal Betha da Prefeitura de Anitápolis/SC:</p>
+                      <p className="font-mono text-purple-700">
+                        {invoice.municipalUrl || `https://e-gov.betha.com.br/e-nota/consulta?cod=${invoice.verificationCode}&mun=4201007`}
+                      </p>
+                      <p className="font-mono text-slate-600">
+                        Protocolo Municipal: <strong>{invoice.municipalProtocol || 'PROTOCOLO-BET-2026114201007'}</strong> • Chave: {invoice.accessKey}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-semibold text-amber-800">
+                        Recibo Provisório de Serviços (RPS Nº {invoice.rpsNumber}) • Aguardando Transmissão à Prefeitura
+                      </p>
+                      <p className="text-slate-500">
+                        Este documento fiscal provisório será convertido em NFS-e oficial após a autorização pelo WebService Betha da Prefeitura.
+                      </p>
+                      <p className="font-mono text-slate-500">Chave de Acesso: {invoice.accessKey}</p>
+                    </>
+                  )}
                 </div>
                 <div className="w-14 h-14 bg-slate-100 border border-slate-300 rounded flex items-center justify-center font-mono text-[9px] text-center">
-                  [QR-CODE]
+                  {invoice.status === 'EMITIDA' ? '[QR-CODE]' : '[RPS]'}
                 </div>
               </div>
             </div>
