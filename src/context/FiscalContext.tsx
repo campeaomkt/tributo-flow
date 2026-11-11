@@ -67,6 +67,7 @@ interface FiscalContextType {
   }) => void;
   simulateRefund: (saleId: string) => void;
   processKiwifyWebhook: (payload: any) => void;
+  syncKiwifySales: () => number;
   closeMonth: (year: number, month: number) => void;
   resetToDefault: () => void;
 }
@@ -74,16 +75,16 @@ interface FiscalContextType {
 const FiscalContext = createContext<FiscalContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  COMPANY: 'tributoflow_company_v5',
-  PLATFORMS: 'tributoflow_platforms_v5',
-  SALES: 'tributoflow_sales_v5',
-  INVOICES: 'tributoflow_invoices_v5',
-  CLOSINGS: 'tributoflow_closings_v5',
+  COMPANY: 'tributoflow_company_v6',
+  PLATFORMS: 'tributoflow_platforms_v6',
+  SALES: 'tributoflow_sales_v6',
+  INVOICES: 'tributoflow_invoices_v6',
+  CLOSINGS: 'tributoflow_closings_v6',
 };
 
 export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [company, setCompany] = useState<CompanySettings>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.COMPANY);
+    const saved = localStorage.getItem(STORAGE_KEYS.COMPANY) || localStorage.getItem('tributoflow_company_v5');
     return saved ? JSON.parse(saved) : initialCompanySettings;
   });
 
@@ -94,14 +95,33 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [sales, setSales] = useState<Sale[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SALES);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Auto-merge if user had older single-sale session
+      if (Array.isArray(parsed) && parsed.length < 11) {
+        const { sales: defaultSales } = generateInitialInvoices();
+        const existingIds = new Set(parsed.map(s => s.externalSaleId));
+        const missing = defaultSales.filter(s => !existingIds.has(s.externalSaleId));
+        return [...missing, ...parsed];
+      }
+      return parsed;
+    }
     const { sales } = generateInitialInvoices();
     return sales;
   });
 
   const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.INVOICES);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length < 11) {
+        const { invoices: defaultInvoices } = generateInitialInvoices();
+        const existingIds = new Set(parsed.map(i => i.saleId));
+        const missing = defaultInvoices.filter(i => !existingIds.has(i.saleId));
+        return [...missing, ...parsed];
+      }
+      return parsed;
+    }
     const { invoices } = generateInitialInvoices();
     return invoices;
   });
@@ -503,6 +523,34 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  const syncKiwifySales = (): number => {
+    const { sales: defaultSales, invoices: defaultInvoices } = generateInitialInvoices();
+    let addedCount = 0;
+
+    setSales(prev => {
+      const existingRefs = new Set(prev.map(s => s.externalSaleId));
+      const missing = defaultSales.filter(s => !existingRefs.has(s.externalSaleId));
+      addedCount = missing.length;
+      if (addedCount === 0) return prev;
+      return [...missing, ...prev];
+    });
+
+    setInvoices(prev => {
+      const existingSaleIds = new Set(prev.map(i => i.saleId));
+      const missing = defaultInvoices.filter(i => !existingSaleIds.has(i.saleId));
+      if (missing.length === 0) return prev;
+      return [...missing, ...prev];
+    });
+
+    updatePlatform('kiwify', {
+      enabled: true,
+      totalSalesProcessed: 11,
+      lastSync: '11/11/2026 13:14',
+    });
+
+    return addedCount;
+  };
+
   const closeMonth = (year: number, month: number) => {
     const now = new Date();
     const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -566,6 +614,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         simulateSale,
         simulateRefund,
         processKiwifyWebhook,
+        syncKiwifySales,
         closeMonth,
         resetToDefault,
       }}

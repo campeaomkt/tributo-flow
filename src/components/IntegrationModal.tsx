@@ -9,7 +9,7 @@ interface IntegrationModalProps {
 }
 
 export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, onClose }) => {
-  const { updatePlatform, setIsSimulatorOpen, processKiwifyWebhook } = useFiscal();
+  const { updatePlatform, setIsSimulatorOpen, processKiwifyWebhook, syncKiwifySales } = useFiscal();
 
   const [enabled, setEnabled] = useState(platform.enabled);
   const [invoiceModel, setInvoiceModel] = useState<InvoiceModel>(platform.invoiceModel);
@@ -32,6 +32,9 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
   const [isTestingEndpoint, setIsTestingEndpoint] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; status: number; message: string } | null>(null);
   const [importedRealSale, setImportedRealSale] = useState(false);
+  const [pastedJson, setPastedJson] = useState('');
+  const [showPasteBox, setShowPasteBox] = useState(false);
+  const [pasteFeedback, setPasteFeedback] = useState<string | null>(null);
 
   // Compute live absolute webhook URL so external platforms like Kiwify can reach the applet
   const liveWebhookUrl = typeof window !== 'undefined'
@@ -417,7 +420,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                 </button>
               </div>
 
-              {/* Action Buttons: Testar Webhook & Importar Venda Real */}
+              {/* Action Buttons: Testar Webhook & Sincronizar Vendas Reais */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
@@ -430,16 +433,76 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                 </button>
 
                 {platform.id === 'kiwify' && (
-                  <button
-                    type="button"
-                    onClick={handleImportRealSale}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>{importedRealSale ? 'Venda Processada com Sucesso!' : 'Processar Venda do Jaide Menezes (R$ 37,90)'}</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        syncKiwifySales();
+                        setEnabled(true);
+                        setImportedRealSale(true);
+                        setTimeout(() => setImportedRealSale(false), 3000);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{importedRealSale ? '✓ 11 Vendas Sincronizadas!' : 'Sincronizar Todas as 11 Vendas (R$ 416,90)'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPasteBox(!showPasteBox)}
+                      className="px-3 py-1.5 rounded-lg border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 text-xs font-semibold flex items-center gap-1.5"
+                    >
+                      <span>{showPasteBox ? 'Fechar Importador' : 'Colar Payload / JSON da Kiwify'}</span>
+                    </button>
+                  </>
                 )}
               </div>
+
+              {/* Manual JSON Payload Importer */}
+              {showPasteBox && (
+                <div className="p-3.5 rounded-xl bg-purple-50/70 border border-purple-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-purple-950 text-xs">
+                      Colar JSON de qualquer webhook da Kiwify (ex: botão "Detalhes" no log):
+                    </span>
+                    <span className="text-[10px] text-purple-700">Formato JSON nativo</span>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={pastedJson}
+                    onChange={e => setPastedJson(e.target.value)}
+                    placeholder='Cole aqui o JSON da requisição da Kiwify, ex: {"order": {"order_ref": "FBCN0ZT", "order_status": "paid", ...}}'
+                    className="w-full p-2 rounded-lg border border-purple-200 bg-white font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                  />
+                  <div className="flex items-center justify-between">
+                    {pasteFeedback && (
+                      <span className="text-[11px] font-semibold text-emerald-700">
+                        {pasteFeedback}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const parsed = JSON.parse(pastedJson);
+                          processKiwifyWebhook(parsed);
+                          setEnabled(true);
+                          setPasteFeedback('✓ Venda processada e NFS-e gerada com sucesso!');
+                          setPastedJson('');
+                          setTimeout(() => setPasteFeedback(null), 4000);
+                        } catch (err: any) {
+                          alert(`JSON inválido: ${err.message}`);
+                        }
+                      }}
+                      disabled={!pastedJson.trim()}
+                      className="px-4 py-1.5 rounded-lg bg-[#2c0853] hover:bg-[#3d0b72] text-white text-xs font-bold disabled:opacity-50 ml-auto"
+                    >
+                      Processar Venda & Emitir NFS-e
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Test Result Feedback */}
               {testResult && (

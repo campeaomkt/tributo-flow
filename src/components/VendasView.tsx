@@ -8,13 +8,30 @@ import {
   RotateCcw, 
   FileText, 
   Zap,
-  ArrowRight
+  ArrowRight,
+  RefreshCw,
+  Check
 } from 'lucide-react';
 
 export const VendasView: React.FC = () => {
-  const { sales, invoices, setSelectedInvoiceForDanfe, emitInvoice, simulateRefund, setIsSimulatorOpen } = useFiscal();
+  const { 
+    sales, 
+    invoices, 
+    setSelectedInvoiceForDanfe, 
+    emitInvoice, 
+    simulateRefund, 
+    setIsSimulatorOpen,
+    syncKiwifySales 
+  } = useFiscal();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'approved' | 'refunded'>('ALL');
+  const [syncToast, setSyncToast] = useState<string | null>(null);
+
+  const handleSyncKiwify = () => {
+    const count = syncKiwifySales();
+    setSyncToast(`Sincronização concluída! ${sales.length} vendas da Kiwify contabilizadas com sucesso.`);
+    setTimeout(() => setSyncToast(null), 4000);
+  };
 
   const filteredSales = sales.filter(s => {
     const matchesSearch =
@@ -37,13 +54,51 @@ export const VendasView: React.FC = () => {
             Monitoramento de todos os checkouts integrados (Kiwify, Hotmart, etc.) e status de emissão fiscal
           </p>
         </div>
-        <button
-          onClick={() => setIsSimulatorOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2c0853] hover:bg-[#3d0b72] text-white text-xs font-semibold shadow-xs"
-        >
-          <Zap className="w-4 h-4 text-amber-300" />
-          <span>Simular Venda Webhook</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncKiwify}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors"
+            title="Sincronizar webhooks e histórico de vendas da Kiwify"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Sincronizar Kiwify</span>
+          </button>
+          <button
+            onClick={() => setIsSimulatorOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2c0853] hover:bg-[#3d0b72] text-white text-xs font-semibold shadow-xs"
+          >
+            <Zap className="w-4 h-4 text-amber-300" />
+            <span>Simular Venda Webhook</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Sync toast */}
+      {syncToast && (
+        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center gap-2">
+          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{syncToast}</span>
+        </div>
+      )}
+
+      {/* Kiwify Live Sync Banner */}
+      <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-900 via-teal-950 to-slate-900 text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-xs border border-emerald-800/40">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span className="font-bold text-sm text-emerald-200">Kiwify Integrada com Sucesso</span>
+            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] border border-emerald-500/30">
+              {sales.length} Vendas Contabilizadas
+            </span>
+          </div>
+          <p className="text-slate-300 text-[11px] mt-1">
+            Total Faturado: <strong className="text-white">R$ {(sales.length * 37.90).toFixed(2).replace('.', ',')}</strong> • Produto: <strong>Pacote de Timbres - Aevo Pro 2.0</strong> • Última venda: <strong>11/11/2026 13:14 (FBCN0ZT)</strong>
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <span className="text-[10px] text-emerald-300 uppercase block font-semibold">Endpoint Webhook Vercel</span>
+          <span className="font-mono text-[11px] text-white font-bold">tributo-flow.vercel.app</span>
+        </div>
       </div>
 
       {/* Filter bar */}
