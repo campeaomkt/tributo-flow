@@ -14,6 +14,8 @@ export interface ParsedPfxResult {
   privateKeyPem: string;
   certPem: string;
   caCertsPem: string[];
+  rawPfxBuffer: Buffer;
+  passphrase: string;
   subjectCN: string;
   issuerCN: string;
   serialNumber: string;
@@ -21,6 +23,8 @@ export interface ParsedPfxResult {
   validFrom: string;
   validTo: string;
   isExpired: boolean;
+  hasClientAuthEku: boolean;
+  chainSubjects: string[];
 }
 
 export interface SefinErrorItem {
@@ -255,22 +259,43 @@ export function parsePfxCertificate(pfxBase64: string, password: string): Parsed
     throw new Error('O arquivo .pfx não contém nenhum certificado X.509 válido.');
   }
 
-  // Match end-entity certificate to private key (by localKeyId or public key modulus)
-  let endEntityCert = certs.find(c => keyLocalKeyId && c.localKeyId === keyLocalKeyId)?.cert;
-  if (!endEntityCert) {
-    const privRsa = privateKey as forge.pki.rsa.PrivateKey;
-    endEntityCert = certs.find(c => {
-      const pub = c.cert.publicKey as forge.pki.rsa.PublicKey;
-      return pub?.n && privRsa?.n && pub.n.equals(privRsa.n);
-    })?.cert;
+  // Match end-entity certificate to private key by RSA public key modulus FIRST (100% exact)
+  const privRsa = privateKey as forge.pki.rsa.PrivateKey;
+  let endEntityCert = certs.find(c => {
+    const pub = c.cert.publicKey as forge.pki.rsa.PublicKey;
+    return Boolean(pub?.n && privRsa?.n && pub.n.equals(privRsa.n));
+  })?.cert;
+  if (!endEntityCert && keyLocalKeyId) {
+    endEntityCert = certs.find(c => c.localKeyId === keyLocalKeyId)?.cert;
   }
   if (!endEntityCert) {
     endEntityCert = certs[0].cert;
   }
 
-  const caCertsPem = certs
-    .filter(c => c.cert !== endEntityCert)
-    .map(c => forgeLib.pki.certificateToPem(c.cert));
+  // Build RFC 5246 ordered intermediate chain (leaf -> direct issuer -> parent issuer),
+  // strictly excluding any self-signed Root CA (Microsoft IIS rejects out-of-order/root chains with 403.16)
+  const otherCerts = certs.map(c => c.cert).filter(c => c !== endEntityCert);
+  const orderedIntermediates: forge.pki.Certificate[] = [];
+  let currentCert = endEntityCert;
+  for (let depth = 0; depth < 6; depth++) {
+    const currentIssuerHash = currentCert.issuer?.hash;
+    if (!currentIssuerHash) break;
+    const issuerCert = otherCerts.find(c => {
+      if (orderedIntermediates.includes(c)) return false;
+      const isSelfSigned = c.subject?.hash && c.issuer?.hash && c.subject.hash === c.issuer.hash;
+      if (isSelfSigned) return false;
+      return c.subject?.hash === currentIssuerHash;
+    });
+    if (!issuerCert) break;
+    orderedIntermediates.push(issuerCert);
+    currentCert = issuerCert;
+  }
+
+  const caCertsPem = orderedIntermediates.map(c => forgeLib.pki.certificateToPem(c));
+  const chainSubjects = orderedIntermediates.map(c => String(c.subject.getField('CN')?.value || 'Intermediária'));
+
+  const extKeyUsage: any = endEntityCert.getExtension('extKeyUsage');
+  const hasClientAuthEku = extKeyUsage ? Boolean(extKeyUsage.clientAuth) : true;
 
   const privateKeyPem = forgeLib.pki.privateKeyToPem(privateKey);
   const certPem = forgeLib.pki.certificateToPem(endEntityCert);
@@ -290,6 +315,8 @@ export function parsePfxCertificate(pfxBase64: string, password: string): Parsed
     privateKeyPem,
     certPem,
     caCertsPem,
+    rawPfxBuffer: Buffer.from(cleanB64, 'base64'),
+    passphrase: password,
     subjectCN,
     issuerCN,
     serialNumber,
@@ -297,6 +324,8 @@ export function parsePfxCertificate(pfxBase64: string, password: string): Parsed
     validFrom,
     validTo,
     isExpired,
+    hasClientAuthEku,
+    chainSubjects,
   };
 }
 
@@ -458,44 +487,48 @@ export function signXmlEnveloped(
   return sig.getSignedXml();
 }
 
-/**
- * Performs an mTLS HTTPS request strictly against allowlisted government hosts.
- */
-function mtlsRequest(options: {
+interface MtlsAttemptResult {
+  statusCode: number;
+  headers: Record<string, any>;
+  bodyBuffer: Buffer;
+  tlsModeUsed: string;
+  attemptedModes: string[];
+}
+
+function isIisHtml403(statusCode: number, bodyBuffer: Buffer): boolean {
+  if (statusCode !== 403) return false;
+  const text = bodyBuffer.toString('utf8', 0, Math.min(bodyBuffer.length, 400)).toLowerCase();
+  return text.includes('<html') || text.includes('403 - forbidden');
+}
+
+function singleMtlsRequest(options: {
   hostname: string;
   path: string;
   method: 'GET' | 'POST';
-  certPem: string;
-  privateKeyPem: string;
-  caCertsPem?: string[];
+  agentOptions: https.AgentOptions;
   body?: string;
   accept?: string;
 }): Promise<{ statusCode: number; headers: Record<string, any>; bodyBuffer: Buffer }> {
-  const allowedHosts = new Set([
-    'sefin.producaorestrita.nfse.gov.br',
-    'sefin.nfse.gov.br',
-    'adn.producaorestrita.nfse.gov.br',
-    'adn.nfse.gov.br',
-  ]);
-
-  if (!allowedHosts.has(options.hostname)) {
-    return Promise.reject(new Error('Host de destino não permitido.'));
-  }
-
   return new Promise((resolve, reject) => {
     const bodyBuf = options.body ? Buffer.from(options.body, 'utf8') : undefined;
     const headers: Record<string, string | number> = {
       Accept: options.accept || 'application/json',
       'User-Agent': 'TributoFlow-NFSe-Nacional/1.0',
+      Connection: 'close',
     };
     if (bodyBuf) {
       headers['Content-Type'] = 'application/json; charset=utf-8';
       headers['Content-Length'] = bodyBuf.length;
     }
 
-    const clientCertChain = [options.certPem, ...(options.caCertsPem || [])]
-      .filter(Boolean)
-      .join('\n');
+    const agent = new https.Agent({
+      ...options.agentOptions,
+      keepAlive: false,
+      maxCachedSessions: 0,
+      minVersion: 'TLSv1.2',
+      maxVersion: 'TLSv1.2',
+      ALPNProtocols: ['http/1.1'],
+    });
 
     const req = https.request(
       {
@@ -503,8 +536,7 @@ function mtlsRequest(options: {
         port: 443,
         path: options.path,
         method: options.method,
-        cert: clientCertChain,
-        key: options.privateKeyPem,
+        agent,
         headers,
         timeout: 25000,
       },
@@ -512,6 +544,7 @@ function mtlsRequest(options: {
         const chunks: Buffer[] = [];
         res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
         res.on('end', () => {
+          agent.destroy();
           resolve({
             statusCode: res.statusCode || 0,
             headers: res.headers,
@@ -522,10 +555,12 @@ function mtlsRequest(options: {
     );
 
     req.on('timeout', () => {
+      agent.destroy();
       req.destroy(new Error('Tempo limite excedido ao conectar nos servidores da Sefin Nacional (25s).'));
     });
 
     req.on('error', err => {
+      agent.destroy();
       reject(err);
     });
 
@@ -534,6 +569,102 @@ function mtlsRequest(options: {
     }
     req.end();
   });
+}
+
+/**
+ * Performs an mTLS HTTPS request strictly against allowlisted government hosts.
+ * Uses an isolated TLSv1.2 HTTP/1.1 agent and automatically tries compatible client-cert formats
+ * (leaf-only -> RFC 5246 ordered chain -> raw PFX) if Microsoft IIS returns an HTML 403.
+ */
+async function mtlsRequest(options: {
+  hostname: string;
+  path: string;
+  method: 'GET' | 'POST';
+  certPem: string;
+  privateKeyPem: string;
+  caCertsPem?: string[];
+  rawPfxBuffer?: Buffer;
+  passphrase?: string;
+  body?: string;
+  accept?: string;
+}): Promise<MtlsAttemptResult> {
+  const allowedHosts = new Set([
+    'sefin.producaorestrita.nfse.gov.br',
+    'sefin.nfse.gov.br',
+    'adn.producaorestrita.nfse.gov.br',
+    'adn.nfse.gov.br',
+  ]);
+
+  if (!allowedHosts.has(options.hostname)) {
+    throw new Error('Host de destino não permitido.');
+  }
+
+  const strategies: Array<{ name: string; agentOptions: https.AgentOptions }> = [
+    {
+      name: 'leaf-only',
+      agentOptions: {
+        cert: options.certPem,
+        key: options.privateKeyPem,
+      },
+    },
+  ];
+
+  if (options.caCertsPem && options.caCertsPem.length > 0) {
+    strategies.push({
+      name: 'ordered-chain',
+      agentOptions: {
+        cert: [options.certPem, ...options.caCertsPem].join('\n'),
+        key: options.privateKeyPem,
+      },
+    });
+  }
+
+  if (options.rawPfxBuffer && options.rawPfxBuffer.length > 0) {
+    strategies.push({
+      name: 'raw-pfx',
+      agentOptions: {
+        pfx: options.rawPfxBuffer,
+        passphrase: options.passphrase ?? '',
+      },
+    });
+  }
+
+  const attemptedModes: string[] = [];
+  let lastResult: { statusCode: number; headers: Record<string, any>; bodyBuffer: Buffer } | null = null;
+  let lastMode = strategies[0].name;
+
+  for (const strategy of strategies) {
+    attemptedModes.push(strategy.name);
+    lastMode = strategy.name;
+    try {
+      const res = await singleMtlsRequest({
+        hostname: options.hostname,
+        path: options.path,
+        method: options.method,
+        agentOptions: strategy.agentOptions,
+        body: options.body,
+        accept: options.accept,
+      });
+      lastResult = res;
+      if (!isIisHtml403(res.statusCode, res.bodyBuffer)) {
+        return { ...res, tlsModeUsed: strategy.name, attemptedModes };
+      }
+    } catch (err) {
+      // Raw PFX may use legacy RC2/3DES unsupported by OpenSSL 3; keep previous HTTP result if available
+      if (strategy.name === 'raw-pfx' && lastResult) {
+        break;
+      }
+      if (!lastResult && strategy === strategies[strategies.length - 1]) {
+        throw err;
+      }
+    }
+  }
+
+  if (!lastResult) {
+    throw new Error('Falha ao estabelecer conexão mTLS com a Sefin Nacional.');
+  }
+
+  return { ...lastResult, tlsModeUsed: lastMode, attemptedModes };
 }
 
 function parseSefinErrors(parsedJson: any): SefinErrorItem[] {
@@ -628,6 +759,8 @@ export async function transmitDpsToSefin(
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rawPfxBuffer: parsedCert.rawPfxBuffer,
+    passphrase: parsedCert.passphrase,
     body: payload,
   });
 
@@ -636,7 +769,7 @@ export async function transmitDpsToSefin(
   try {
     parsedJson = JSON.parse(rawResponse);
   } catch {
-    // Non-JSON response (e.g. gateway error page)
+    // Non-JSON response (e.g. IIS 403 or gateway error page)
   }
 
   const errors = parseSefinErrors(parsedJson);
@@ -679,6 +812,29 @@ export async function transmitDpsToSefin(
         env === 'HOMOLOGACAO'
           ? `NFS-e de TESTE autorizada na Produção Restrita (Sefin Nacional)! Chave: ${chaveAcesso}`
           : `NFS-e OFICIAL autorizada pela Sefin Nacional! Chave: ${chaveAcesso}`,
+    };
+  }
+
+  if (isIisHtml403(response.statusCode, response.bodyBuffer)) {
+    const diagDesc =
+      `O servidor IIS da Sefin Nacional (${hostCfg.sefin}) recusou a autenticação do Certificado Digital A1 com HTTP 403 Forbidden ` +
+      `após tentar os modos mTLS [${response.attemptedModes.join(', ')}]. ` +
+      `Certificado enviado: "${parsedCert.subjectCN}" (Emissor: "${parsedCert.issuerCN}", ClientAuth EKU: ${parsedCert.hasClientAuthEku ? 'Sim' : 'Não'}, Intermediárias no .pfx: ${parsedCert.caCertsPem.length}). ` +
+      (env === 'HOMOLOGACAO'
+        ? 'No ambiente de Produção Restrita (Homologação), verifique se você já acessou https://www.producaorestrita.nfse.gov.br/EmissorNacional com este certificado ou se a AC emissora está homologada nesse ambiente.'
+        : 'Verifique se o certificado e-CNPJ A1 está ativo, não revogado e com cadeia ICP-Brasil válida.');
+
+    return {
+      success: false,
+      httpStatus: 403,
+      environment: env,
+      endpointUrl,
+      dpsId,
+      signedDpsXml,
+      dpsXmlGZipB64,
+      rawResponse,
+      errors: [{ codigo: 'IIS_403_MTLS', descricao: diagDesc }],
+      message: diagDesc,
     };
   }
 
@@ -770,6 +926,8 @@ export async function cancelNfseOnSefin(params: {
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rawPfxBuffer: parsedCert.rawPfxBuffer,
+    passphrase: parsedCert.passphrase,
     body: JSON.stringify({ pedidoRegistroEventoXmlGZipB64 }),
   });
 
@@ -827,6 +985,8 @@ export async function consultNfseOnSefin(params: {
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rawPfxBuffer: parsedCert.rawPfxBuffer,
+    passphrase: parsedCert.passphrase,
   });
 
   const rawResponse = response.bodyBuffer.toString('utf8');
@@ -881,6 +1041,8 @@ export async function fetchOfficialDanfsePdf(params: {
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rawPfxBuffer: parsedCert.rawPfxBuffer,
+    passphrase: parsedCert.passphrase,
     accept: 'application/pdf',
   });
 
