@@ -20,9 +20,12 @@ import {
   KeyRound,
   Zap,
   Server,
-  Loader2
+  Loader2,
+  Activity,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
-import { validatePfxCertificate } from '../services/directTransmitter';
+import { validatePfxCertificate, SefinConnectionTestResult } from '../services/directTransmitter';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
   const {
@@ -33,6 +36,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
     certSource,
     setInMemoryCertificate,
     clearInMemoryCertificate,
+    testSefinMtls,
   } = useFiscal();
 
   const [taxRegime, setTaxRegime] = useState<TaxRegime>(company.taxRegime);
@@ -60,6 +64,24 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [isValidatingCert, setIsValidatingCert] = useState(false);
   const [showCertPassword, setShowCertPassword] = useState(false);
   const [certFeedback, setCertFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isTestingMtls, setIsTestingMtls] = useState(false);
+  const [mtlsResult, setMtlsResult] = useState<SefinConnectionTestResult | null>(null);
+
+  const handleTestMtlsConnection = async () => {
+    setIsTestingMtls(true);
+    setMtlsResult(null);
+    try {
+      const res = await testSefinMtls();
+      setMtlsResult(res);
+    } catch (err: any) {
+      setMtlsResult({
+        success: false,
+        error: err?.message || 'Erro inesperado ao testar conexão mTLS.',
+      });
+    } finally {
+      setIsTestingMtls(false);
+    }
+  };
 
   // Calculate live Fator R
   const numRbt12 = parseFloat(rbt12) || 0;
@@ -725,10 +747,105 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                   Chave privada e senha protegidas <strong>apenas em memória segura</strong> (nunca gravadas no navegador/localStorage).
                 </span>
               </div>
-              <span className="text-emerald-700 font-semibold shrink-0">
-                ✓ Pronto para mTLS na Sefin Nacional
-              </span>
+              <button
+                type="button"
+                onClick={handleTestMtlsConnection}
+                disabled={isTestingMtls}
+                className="px-3.5 py-2 rounded-lg bg-[#2c0853] hover:bg-[#3d0b72] text-white font-bold text-[11px] flex items-center gap-1.5 transition-colors shrink-0 disabled:opacity-60"
+              >
+                {isTestingMtls ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                ) : (
+                  <Activity className="w-3.5 h-3.5 text-amber-300" />
+                )}
+                <span>
+                  {isTestingMtls
+                    ? 'Testando mTLS na Sefin...'
+                    : 'Testar Conexão mTLS (Homologação + Produção)'}
+                </span>
+              </button>
             </div>
+
+            {mtlsResult && (
+              <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-slate-900">
+                    Diagnóstico mTLS na Sefin Nacional (Somente Leitura — Sem Emitir Nota)
+                  </p>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    GET /parametros_municipais/4201109/convenio
+                  </span>
+                </div>
+
+                {mtlsResult.error && (
+                  <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-semibold">
+                    {mtlsResult.error}
+                  </div>
+                )}
+
+                {mtlsResult.homologacao && mtlsResult.producao && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {[
+                      { label: 'Homologação (Produção Restrita)', data: mtlsResult.homologacao },
+                      { label: 'Produção (Oficial)', data: mtlsResult.producao },
+                    ].map(item => (
+                      <div
+                        key={item.label}
+                        className={`p-3 rounded-lg border space-y-1.5 ${
+                          item.data.authenticated
+                            ? 'bg-emerald-50/70 border-emerald-300'
+                            : 'bg-rose-50/70 border-rose-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-slate-900">{item.label}</span>
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-bold text-[10px] ${
+                              item.data.authenticated
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-rose-600 text-white'
+                            }`}
+                          >
+                            {item.data.authenticated ? (
+                              <CheckCircle2 className="w-3 h-3" />
+                            ) : (
+                              <XCircle className="w-3 h-3" />
+                            )}
+                            {item.data.authenticated
+                              ? `Autenticado (HTTP ${item.data.httpStatus})`
+                              : `Recusado (HTTP ${item.data.httpStatus})`}
+                          </span>
+                        </div>
+                        <p className="font-mono text-[10px] text-slate-600 break-all">
+                          {item.data.hostname} • Modo TLS: <strong>{item.data.tlsModeUsed}</strong>
+                        </p>
+                        {item.data.strategyLogs.length > 0 && (
+                          <p className="font-mono text-[10px] text-slate-500 break-all">
+                            Tentativas: {item.data.strategyLogs.join(' | ')}
+                          </p>
+                        )}
+                        <div className="p-2 rounded bg-slate-900 text-slate-100 font-mono text-[10px] max-h-24 overflow-y-auto break-all">
+                          {item.data.responsePreview}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {mtlsResult.certificate && (
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-[10px] text-slate-600 space-y-1">
+                    <p className="font-bold text-slate-700">
+                      Cadeia extraída do .pfx (ClientAuth EKU: {mtlsResult.certificate.hasClientAuthEku ? 'Sim' : 'Não'}):
+                    </p>
+                    <ul className="list-disc pl-4 space-y-0.5 font-mono">
+                      {mtlsResult.certificate.allCertSubjects.map((s, idx) => (
+                        <li key={idx}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <form onSubmit={handleInstallCertificate} className="p-5 rounded-xl border border-amber-300 bg-amber-50/50 space-y-4 text-xs">

@@ -284,3 +284,61 @@ export async function downloadOfficialDanfse(params: {
   }
   return parsed.data;
 }
+
+export interface SefinEnvProbeResult {
+  environment: FiscalEnvironment;
+  hostname: string;
+  endpointUrl: string;
+  authenticated: boolean;
+  httpStatus: number;
+  tlsModeUsed: string;
+  strategyLogs: string[];
+  responsePreview: string;
+}
+
+export interface SefinConnectionTestResult {
+  success: boolean;
+  error?: string;
+  certificate?: {
+    subjectCN: string;
+    issuerCN: string;
+    cnpj?: string;
+    validTo: string;
+    hasClientAuthEku: boolean;
+    allCertSubjects: string[];
+  };
+  homologacao?: SefinEnvProbeResult;
+  producao?: SefinEnvProbeResult;
+}
+
+/**
+ * 100% Read-only mTLS connection diagnostic against BOTH Homologação and Produção
+ * (queries municipal convenio for IBGE 4201109 — never emits any invoice).
+ */
+export async function testSefinMtlsConnection(params: {
+  ibgeCode?: string;
+  pfxBase64?: string;
+  certPassword?: string;
+}): Promise<SefinConnectionTestResult> {
+  try {
+    const res = await fetch('/api/nfse/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const parsed = await safeParseJson<SefinConnectionTestResult>(res);
+    if (!parsed.ok || !parsed.data) {
+      return {
+        success: false,
+        error: `Erro HTTP ${res.status} ao testar mTLS na Sefin Nacional (${(parsed.rawText || 'resposta inválida').slice(0, 140)}).`,
+      };
+    }
+    return parsed.data;
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Falha de rede ao executar o teste de conexão mTLS.',
+    };
+  }
+}
+

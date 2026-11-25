@@ -8,6 +8,7 @@ import {
   cancelNfseOnSefin,
   consultNfseOnSefin,
   fetchOfficialDanfsePdf,
+  testSefinConnection,
 } from './api/_lib/sefinNacional.js';
 
 async function startServer() {
@@ -79,6 +80,24 @@ async function startServer() {
       return res.status(400).json({
         success: false,
         error: err?.message || 'Erro ao validar o Certificado Digital A1.',
+      });
+    }
+  });
+
+  // Read-only mTLS connection diagnostic against both Homologação and Produção (never emits any invoice)
+  app.post('/api/nfse/test-connection', async (req: Request, res: Response) => {
+    try {
+      const { ibgeCode, pfxBase64, certPassword } = req.body || {};
+      const result = await testSefinConnection({
+        ibgeCode: typeof ibgeCode === 'string' ? ibgeCode : '4201109',
+        pfxBase64,
+        certPassword,
+      });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        error: err?.message || 'Erro ao testar conexão mTLS com a Sefin Nacional.',
       });
     }
   });

@@ -22,8 +22,10 @@ import {
   consultNfseDirect,
   downloadOfficialDanfse,
   fetchServerCertStatus,
+  testSefinMtlsConnection,
   DirectTransmissionResult,
   ServerCertStatus,
+  SefinConnectionTestResult,
 } from '../services/directTransmitter';
 
 interface DateFilter {
@@ -73,6 +75,7 @@ interface FiscalContextType {
   cancelInvoice: (invoiceId: string, reason: string) => Promise<{ success: boolean; message: string }>;
   consultInvoiceSefin: (invoiceId: string) => Promise<{ success: boolean; message: string; nfseXml?: string }>;
   downloadOfficialDanfsePdf: (invoiceId: string) => Promise<{ success: boolean; message: string }>;
+  testSefinMtls: () => Promise<SefinConnectionTestResult>;
   simulateSale: (saleInput: {
     platform: PlatformId;
     productName: string;
@@ -502,6 +505,14 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return { success: false, message: res.message };
   };
 
+  const testSefinMtls = async (): Promise<SefinConnectionTestResult> => {
+    return testSefinMtlsConnection({
+      ibgeCode: '4201109',
+      pfxBase64: certPfxBase64 || undefined,
+      certPassword: certPasswordMem || undefined,
+    });
+  };
+
   const simulateSale = (input: {
     platform: PlatformId;
     productName: string;
@@ -929,6 +940,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         cancelInvoice,
         consultInvoiceSefin,
         downloadOfficialDanfsePdf,
+        testSefinMtls,
         simulateSale,
         simulateRefund,
         processKiwifyWebhook,

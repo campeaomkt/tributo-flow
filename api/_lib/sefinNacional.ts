@@ -14,6 +14,7 @@ export interface ParsedPfxResult {
   privateKeyPem: string;
   certPem: string;
   caCertsPem: string[];
+  rootCertsPem: string[];
   rawPfxBuffer: Buffer;
   passphrase: string;
   subjectCN: string;
@@ -25,6 +26,7 @@ export interface ParsedPfxResult {
   isExpired: boolean;
   hasClientAuthEku: boolean;
   chainSubjects: string[];
+  allCertSubjects: string[];
 }
 
 export interface SefinErrorItem {
@@ -294,6 +296,16 @@ export function parsePfxCertificate(pfxBase64: string, password: string): Parsed
   const caCertsPem = orderedIntermediates.map(c => forgeLib.pki.certificateToPem(c));
   const chainSubjects = orderedIntermediates.map(c => String(c.subject.getField('CN')?.value || 'Intermediária'));
 
+  const rootCerts = otherCerts.filter(
+    c => c.subject?.hash && c.issuer?.hash && c.subject.hash === c.issuer.hash
+  );
+  const rootCertsPem = rootCerts.map(c => forgeLib.pki.certificateToPem(c));
+  const allCertSubjects = certs.map(c => {
+    const s = String(c.cert.subject.getField('CN')?.value || '?');
+    const i = String(c.cert.issuer.getField('CN')?.value || '?');
+    return `${s} (emissor: ${i})`;
+  });
+
   const extKeyUsage: any = endEntityCert.getExtension('extKeyUsage');
   const hasClientAuthEku = extKeyUsage ? Boolean(extKeyUsage.clientAuth) : true;
 
@@ -315,6 +327,7 @@ export function parsePfxCertificate(pfxBase64: string, password: string): Parsed
     privateKeyPem,
     certPem,
     caCertsPem,
+    rootCertsPem,
     rawPfxBuffer: Buffer.from(cleanB64, 'base64'),
     passphrase: password,
     subjectCN,
@@ -326,6 +339,7 @@ export function parsePfxCertificate(pfxBase64: string, password: string): Parsed
     isExpired,
     hasClientAuthEku,
     chainSubjects,
+    allCertSubjects,
   };
 }
 
@@ -493,6 +507,7 @@ interface MtlsAttemptResult {
   bodyBuffer: Buffer;
   tlsModeUsed: string;
   attemptedModes: string[];
+  strategyLogs: string[];
 }
 
 function isIisHtml403(statusCode: number, bodyBuffer: Buffer): boolean {
@@ -501,11 +516,12 @@ function isIisHtml403(statusCode: number, bodyBuffer: Buffer): boolean {
   return text.includes('<html') || text.includes('403 - forbidden');
 }
 
-function singleMtlsRequest(options: {
+function execHttpOverAgent(options: {
   hostname: string;
   path: string;
   method: 'GET' | 'POST';
-  agentOptions: https.AgentOptions;
+  agent: https.Agent;
+  connectionHeader: 'keep-alive' | 'close';
   body?: string;
   accept?: string;
 }): Promise<{ statusCode: number; headers: Record<string, any>; bodyBuffer: Buffer }> {
@@ -514,21 +530,12 @@ function singleMtlsRequest(options: {
     const headers: Record<string, string | number> = {
       Accept: options.accept || 'application/json',
       'User-Agent': 'TributoFlow-NFSe-Nacional/1.0',
-      Connection: 'close',
+      Connection: options.connectionHeader,
     };
     if (bodyBuf) {
       headers['Content-Type'] = 'application/json; charset=utf-8';
       headers['Content-Length'] = bodyBuf.length;
     }
-
-    const agent = new https.Agent({
-      ...options.agentOptions,
-      keepAlive: false,
-      maxCachedSessions: 0,
-      minVersion: 'TLSv1.2',
-      maxVersion: 'TLSv1.2',
-      ALPNProtocols: ['http/1.1'],
-    });
 
     const req = https.request(
       {
@@ -536,7 +543,7 @@ function singleMtlsRequest(options: {
         port: 443,
         path: options.path,
         method: options.method,
-        agent,
+        agent: options.agent,
         headers,
         timeout: 25000,
       },
@@ -544,7 +551,6 @@ function singleMtlsRequest(options: {
         const chunks: Buffer[] = [];
         res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
         res.on('end', () => {
-          agent.destroy();
           resolve({
             statusCode: res.statusCode || 0,
             headers: res.headers,
@@ -555,12 +561,10 @@ function singleMtlsRequest(options: {
     );
 
     req.on('timeout', () => {
-      agent.destroy();
       req.destroy(new Error('Tempo limite excedido ao conectar nos servidores da Sefin Nacional (25s).'));
     });
 
     req.on('error', err => {
-      agent.destroy();
       reject(err);
     });
 
@@ -571,10 +575,61 @@ function singleMtlsRequest(options: {
   });
 }
 
+async function singleMtlsRequest(options: {
+  hostname: string;
+  path: string;
+  method: 'GET' | 'POST';
+  agentOptions: https.AgentOptions;
+  body?: string;
+  accept?: string;
+  preAuthPath?: string;
+}): Promise<{ statusCode: number; headers: Record<string, any>; bodyBuffer: Buffer }> {
+  const usePreAuth = Boolean(options.method === 'POST' && options.preAuthPath);
+  const agent = new https.Agent({
+    ...options.agentOptions,
+    keepAlive: usePreAuth,
+    maxSockets: 1,
+    maxCachedSessions: 0,
+    minVersion: 'TLSv1.2',
+    maxVersion: 'TLSv1.2',
+    ALPNProtocols: ['http/1.1'],
+  });
+
+  try {
+    if (usePreAuth && options.preAuthPath) {
+      // Zero-body GET lets Microsoft IIS complete TLS 1.2 client-cert renegotiation cleanly
+      // before sending the large POST DPS body on the exact same authenticated keep-alive socket
+      const preRes = await execHttpOverAgent({
+        hostname: options.hostname,
+        path: options.preAuthPath,
+        method: 'GET',
+        agent,
+        connectionHeader: 'keep-alive',
+        accept: 'application/json',
+      });
+      if (isIisHtml403(preRes.statusCode, preRes.bodyBuffer)) {
+        return preRes;
+      }
+    }
+
+    return await execHttpOverAgent({
+      hostname: options.hostname,
+      path: options.path,
+      method: options.method,
+      agent,
+      connectionHeader: 'close',
+      body: options.body,
+      accept: options.accept,
+    });
+  } finally {
+    agent.destroy();
+  }
+}
+
 /**
  * Performs an mTLS HTTPS request strictly against allowlisted government hosts.
- * Uses an isolated TLSv1.2 HTTP/1.1 agent and automatically tries compatible client-cert formats
- * (leaf-only -> RFC 5246 ordered chain -> raw PFX) if Microsoft IIS returns an HTML 403.
+ * Uses an isolated TLSv1.2 HTTP/1.1 agent (with zero-body GET pre-auth before POST)
+ * and automatically tries compatible client-cert formats if Microsoft IIS returns an HTML 403.
  */
 async function mtlsRequest(options: {
   hostname: string;
@@ -583,10 +638,12 @@ async function mtlsRequest(options: {
   certPem: string;
   privateKeyPem: string;
   caCertsPem?: string[];
+  rootCertsPem?: string[];
   rawPfxBuffer?: Buffer;
   passphrase?: string;
   body?: string;
   accept?: string;
+  preAuthPath?: string;
 }): Promise<MtlsAttemptResult> {
   const allowedHosts = new Set([
     'sefin.producaorestrita.nfse.gov.br',
@@ -619,6 +676,16 @@ async function mtlsRequest(options: {
     });
   }
 
+  if (options.rootCertsPem && options.rootCertsPem.length > 0) {
+    strategies.push({
+      name: 'full-chain-with-root',
+      agentOptions: {
+        cert: [options.certPem, ...(options.caCertsPem || []), ...options.rootCertsPem].join('\n'),
+        key: options.privateKeyPem,
+      },
+    });
+  }
+
   if (options.rawPfxBuffer && options.rawPfxBuffer.length > 0) {
     strategies.push({
       name: 'raw-pfx',
@@ -630,6 +697,7 @@ async function mtlsRequest(options: {
   }
 
   const attemptedModes: string[] = [];
+  const strategyLogs: string[] = [];
   let lastResult: { statusCode: number; headers: Record<string, any>; bodyBuffer: Buffer } | null = null;
   let lastMode = strategies[0].name;
 
@@ -644,13 +712,15 @@ async function mtlsRequest(options: {
         agentOptions: strategy.agentOptions,
         body: options.body,
         accept: options.accept,
+        preAuthPath: options.preAuthPath,
       });
       lastResult = res;
+      strategyLogs.push(`${strategy.name}: HTTP ${res.statusCode}`);
       if (!isIisHtml403(res.statusCode, res.bodyBuffer)) {
-        return { ...res, tlsModeUsed: strategy.name, attemptedModes };
+        return { ...res, tlsModeUsed: strategy.name, attemptedModes, strategyLogs };
       }
-    } catch (err) {
-      // Raw PFX may use legacy RC2/3DES unsupported by OpenSSL 3; keep previous HTTP result if available
+    } catch (err: any) {
+      strategyLogs.push(`${strategy.name}: ERRO (${err?.code || err?.message || 'falha TLS'})`);
       if (strategy.name === 'raw-pfx' && lastResult) {
         break;
       }
@@ -664,7 +734,7 @@ async function mtlsRequest(options: {
     throw new Error('Falha ao estabelecer conexão mTLS com a Sefin Nacional.');
   }
 
-  return { ...lastResult, tlsModeUsed: lastMode, attemptedModes };
+  return { ...lastResult, tlsModeUsed: lastMode, attemptedModes, strategyLogs };
 }
 
 function parseSefinErrors(parsedJson: any): SefinErrorItem[] {
@@ -750,8 +820,9 @@ export async function transmitDpsToSefin(
   const gzipped = zlib.gzipSync(Buffer.from(signedDpsXml, 'utf8'), { level: 9 });
   const dpsXmlGZipB64 = gzipped.toString('base64');
 
-  // 5. Transmit via mTLS POST to Sefin Nacional
+  // 5. Transmit via mTLS POST to Sefin Nacional (with zero-body GET pre-auth for IIS TLS 1.2 renegotiation)
   const payload = JSON.stringify({ dpsXmlGZipB64 });
+  const ibgeForPreAuth = getIbgeCityCode(input.company.address?.city, input.company.address?.state);
   const response = await mtlsRequest({
     hostname: hostCfg.sefin,
     path: endpointPath,
@@ -759,9 +830,11 @@ export async function transmitDpsToSefin(
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rootCertsPem: parsedCert.rootCertsPem,
     rawPfxBuffer: parsedCert.rawPfxBuffer,
     passphrase: parsedCert.passphrase,
     body: payload,
+    preAuthPath: `/SefinNacional/parametros_municipais/${ibgeForPreAuth}/convenio`,
   });
 
   const rawResponse = response.bodyBuffer.toString('utf8');
@@ -817,11 +890,11 @@ export async function transmitDpsToSefin(
 
   if (isIisHtml403(response.statusCode, response.bodyBuffer)) {
     const diagDesc =
-      `O servidor IIS da Sefin Nacional (${hostCfg.sefin}) recusou a autenticação do Certificado Digital A1 com HTTP 403 Forbidden ` +
-      `após tentar os modos mTLS [${response.attemptedModes.join(', ')}]. ` +
-      `Certificado enviado: "${parsedCert.subjectCN}" (Emissor: "${parsedCert.issuerCN}", ClientAuth EKU: ${parsedCert.hasClientAuthEku ? 'Sim' : 'Não'}, Intermediárias no .pfx: ${parsedCert.caCertsPem.length}). ` +
+      `O servidor IIS da Sefin Nacional (${hostCfg.sefin}) recusou a autenticação do Certificado Digital A1 com HTTP 403 Forbidden. ` +
+      `Tentativas mTLS: [${response.strategyLogs.join(' | ')}]. ` +
+      `Certificados no .pfx (${parsedCert.allCertSubjects.length}): ${parsedCert.allCertSubjects.join(' ; ')}. ` +
       (env === 'HOMOLOGACAO'
-        ? 'No ambiente de Produção Restrita (Homologação), verifique se você já acessou https://www.producaorestrita.nfse.gov.br/EmissorNacional com este certificado ou se a AC emissora está homologada nesse ambiente.'
+        ? 'Use o botão "Testar Conexão mTLS (Homologação + Produção)" em Regimes Tributários para verificar sem emitir nota se o servidor de Produção já aceita este certificado.'
         : 'Verifique se o certificado e-CNPJ A1 está ativo, não revogado e com cadeia ICP-Brasil válida.');
 
     return {
@@ -1061,3 +1134,104 @@ export async function fetchOfficialDanfsePdf(params: {
     message: `ADN Nacional retornou HTTP ${response.statusCode}: ${response.bodyBuffer.toString('utf8').slice(0, 200)}`,
   };
 }
+
+export interface SefinEnvProbeResult {
+  environment: SefinEnvironment;
+  hostname: string;
+  endpointUrl: string;
+  authenticated: boolean;
+  httpStatus: number;
+  tlsModeUsed: string;
+  strategyLogs: string[];
+  responsePreview: string;
+}
+
+export interface SefinConnectionTestResult {
+  success: boolean;
+  certificate: {
+    subjectCN: string;
+    issuerCN: string;
+    cnpj?: string;
+    validTo: string;
+    hasClientAuthEku: boolean;
+    allCertSubjects: string[];
+  };
+  homologacao: SefinEnvProbeResult;
+  producao: SefinEnvProbeResult;
+}
+
+/**
+ * Performs a 100% READ-ONLY mTLS GET test against BOTH Homologação and Produção
+ * (consulting municipal convenio parameters for Anitápolis/SC IBGE 4201109 — NEVER emits any invoice).
+ */
+export async function testSefinConnection(params: {
+  ibgeCode?: string;
+  pfxBase64?: string;
+  certPassword?: string;
+}): Promise<SefinConnectionTestResult> {
+  const cleanIbge = digitsOnly(params.ibgeCode || '4201109').slice(0, 7) || '4201109';
+  const creds = resolveCertCredentials(params.pfxBase64, params.certPassword);
+  const parsedCert = parsePfxCertificate(creds.pfxBase64, creds.certPassword);
+
+  const probeEnv = async (env: SefinEnvironment): Promise<SefinEnvProbeResult> => {
+    const hostCfg = SEFIN_HOSTS[env];
+    const path = `/SefinNacional/parametros_municipais/${cleanIbge}/convenio`;
+    const endpointUrl = `https://${hostCfg.sefin}${path}`;
+    try {
+      const res = await mtlsRequest({
+        hostname: hostCfg.sefin,
+        path,
+        method: 'GET',
+        certPem: parsedCert.certPem,
+        privateKeyPem: parsedCert.privateKeyPem,
+        caCertsPem: parsedCert.caCertsPem,
+        rootCertsPem: parsedCert.rootCertsPem,
+        rawPfxBuffer: parsedCert.rawPfxBuffer,
+        passphrase: parsedCert.passphrase,
+      });
+      const text = res.bodyBuffer.toString('utf8');
+      const isHtml403 = isIisHtml403(res.statusCode, res.bodyBuffer);
+      return {
+        environment: env,
+        hostname: hostCfg.sefin,
+        endpointUrl,
+        authenticated: !isHtml403 && res.statusCode > 0 && res.statusCode !== 401 && res.statusCode !== 403,
+        httpStatus: res.statusCode,
+        tlsModeUsed: res.tlsModeUsed,
+        strategyLogs: res.strategyLogs,
+        responsePreview: isHtml403 ? 'HTTP 403 IIS (Certificado recusado no mTLS)' : text.slice(0, 400),
+      };
+    } catch (err: any) {
+      return {
+        environment: env,
+        hostname: hostCfg.sefin,
+        endpointUrl,
+        authenticated: false,
+        httpStatus: 0,
+        tlsModeUsed: 'none',
+        strategyLogs: [`ERRO: ${err?.message || 'Falha de conexão'}`],
+        responsePreview: err?.message || 'Falha de conexão',
+      };
+    }
+  };
+
+  const [homologacao, producao] = await Promise.all([
+    probeEnv('HOMOLOGACAO'),
+    probeEnv('PRODUCAO'),
+  ]);
+
+  return {
+    success: homologacao.authenticated || producao.authenticated,
+    certificate: {
+      subjectCN: parsedCert.subjectCN,
+      issuerCN: parsedCert.issuerCN,
+      cnpj: parsedCert.cnpj,
+      validTo: parsedCert.validTo,
+      hasClientAuthEku: parsedCert.hasClientAuthEku,
+      allCertSubjects: parsedCert.allCertSubjects,
+    },
+    homologacao,
+    producao,
+  };
+}
+
