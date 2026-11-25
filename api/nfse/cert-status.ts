@@ -1,14 +1,14 @@
-import { parsePfxCertificate, hasServerEnvCert } from '../../server/sefinNacional';
+import { parsePfxCertificate, hasServerEnvCert } from '../_lib/sefinNacional.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  const configured = hasServerEnvCert();
-  if (!configured) {
-    return res.status(200).json({ configured: false });
-  }
   try {
+    const configured = hasServerEnvCert();
+    if (!configured) {
+      return res.status(200).json({ configured: false });
+    }
     const parsed = parsePfxCertificate(
       process.env.NFSE_PFX_BASE64 || '',
       process.env.NFSE_CERT_PASSWORD || ''

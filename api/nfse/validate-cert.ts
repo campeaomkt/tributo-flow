@@ -1,11 +1,23 @@
-import { parsePfxCertificate } from '../../server/sefinNacional';
+import { parsePfxCertificate } from '../_lib/sefinNacional.js';
+
+function getJsonBody(req: any): Record<string, any> {
+  if (!req?.body) return {};
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  return req.body;
+}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
   try {
-    const { pfxBase64, password } = req.body || {};
+    const { pfxBase64, password } = getJsonBody(req);
     if (typeof pfxBase64 !== 'string' || !pfxBase64.trim()) {
       return res.status(400).json({ success: false, error: 'Arquivo .pfx/.p12 não fornecido.' });
     }

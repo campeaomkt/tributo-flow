@@ -8,7 +8,7 @@ import {
   cancelNfseOnSefin,
   consultNfseOnSefin,
   fetchOfficialDanfsePdf,
-} from './server/sefinNacional';
+} from './api/_lib/sefinNacional.js';
 
 async function startServer() {
   const app = express();

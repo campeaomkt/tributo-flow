@@ -50,14 +50,24 @@ export interface ServerCertStatus {
   error?: string;
 }
 
+async function safeParseJson<T = any>(res: Response): Promise<{ ok: boolean; status: number; data?: T; rawText?: string }> {
+  const rawText = await res.text();
+  try {
+    return { ok: true, status: res.status, data: JSON.parse(rawText) as T, rawText };
+  } catch {
+    return { ok: false, status: res.status, rawText };
+  }
+}
+
 /**
  * Checks if a server-side A1 certificate is configured via environment variables.
  */
 export async function fetchServerCertStatus(): Promise<ServerCertStatus> {
   try {
     const res = await fetch('/api/nfse/cert-status');
-    if (!res.ok) return { configured: false };
-    return await res.json();
+    const parsed = await safeParseJson<ServerCertStatus>(res);
+    if (!res.ok || !parsed.ok || !parsed.data) return { configured: false };
+    return parsed.data;
   } catch {
     return { configured: false };
   }
@@ -70,13 +80,26 @@ export async function validatePfxCertificate(
   pfxBase64: string,
   password: string
 ): Promise<CertValidationResult> {
-  const res = await fetch('/api/nfse/validate-cert', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pfxBase64, password }),
-  });
-  const data = await res.json();
-  return data;
+  try {
+    const res = await fetch('/api/nfse/validate-cert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pfxBase64, password }),
+    });
+    const parsed = await safeParseJson<CertValidationResult>(res);
+    if (!parsed.ok || !parsed.data) {
+      return {
+        success: false,
+        error: `Erro HTTP ${res.status} no servidor ao validar o certificado (${(parsed.rawText || 'resposta inválida').slice(0, 120)}).`,
+      };
+    }
+    return parsed.data;
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Falha de comunicação com o servidor ao validar o certificado.',
+    };
+  }
 }
 
 /**
@@ -129,7 +152,18 @@ export async function transmitDirectToPrefeitura(
     }),
   });
 
-  const data = await res.json();
+  const parsed = await safeParseJson<any>(res);
+  const data = parsed.ok && parsed.data ? parsed.data : {
+    success: false,
+    httpStatus: res.status,
+    errors: [
+      {
+        codigo: `HTTP_${res.status}`,
+        descricao: `Erro HTTP ${res.status} no servidor ao transmitir para a Sefin Nacional: ${(parsed.rawText || '').slice(0, 180)}`,
+      },
+    ],
+    message: `Erro HTTP ${res.status} no servidor ao transmitir para a Sefin Nacional.`,
+  };
 
   return {
     success: Boolean(data.success),
@@ -181,7 +215,15 @@ export async function cancelNfseDirect(params: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  return await res.json();
+  const parsed = await safeParseJson<any>(res);
+  if (!parsed.ok || !parsed.data) {
+    return {
+      success: false,
+      httpStatus: res.status,
+      message: `Erro HTTP ${res.status} no servidor ao cancelar na Sefin Nacional.`,
+    };
+  }
+  return parsed.data;
 }
 
 /**
@@ -206,7 +248,16 @@ export async function consultNfseDirect(params: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  return await res.json();
+  const parsed = await safeParseJson<any>(res);
+  if (!parsed.ok || !parsed.data) {
+    return {
+      success: false,
+      httpStatus: res.status,
+      chaveAcesso: params.chaveAcesso,
+      message: `Erro HTTP ${res.status} no servidor ao consultar na Sefin Nacional.`,
+    };
+  }
+  return parsed.data;
 }
 
 /**
@@ -223,5 +274,13 @@ export async function downloadOfficialDanfse(params: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  return await res.json();
+  const parsed = await safeParseJson<any>(res);
+  if (!parsed.ok || !parsed.data) {
+    return {
+      success: false,
+      httpStatus: res.status,
+      message: `Erro HTTP ${res.status} no servidor ao baixar DANFSe oficial.`,
+    };
+  }
+  return parsed.data;
 }
