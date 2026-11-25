@@ -13,7 +13,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({ onCl
   const [tradeName, setTradeName] = useState(company.tradeName || 'CAMPEAO NEGOCIOS DIGITIAS');
   const [corporateName, setCorporateName] = useState(company.corporateName || 'CAMPEAO NEGOCIOS DIGITAIS LTDA');
   const [stateRegistration, setStateRegistration] = useState(company.stateRegistration || '264108787');
-  const [municipalRegistration, setMunicipalRegistration] = useState(company.municipalRegistration || '');
+  const [municipalRegistration, setMunicipalRegistration] = useState(company.municipalRegistration || '1618');
 
   const [crt, setCrt] = useState(company.crt || 'Simples Nacional');
   const [specialRegime, setSpecialRegime] = useState(

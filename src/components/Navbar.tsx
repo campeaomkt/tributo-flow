@@ -19,7 +19,15 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
-  const { company, setIsSimulatorOpen, setIsCompanyModalOpen, setCurrentView, resetToDefault } = useFiscal();
+  const {
+    company,
+    hasLoadedCert,
+    certSource,
+    setIsSimulatorOpen,
+    setIsCompanyModalOpen,
+    setCurrentView,
+    resetToDefault,
+  } = useFiscal();
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
@@ -55,9 +63,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span>CNPJ: {company.cnpj}</span>
               <span>•</span>
-              {company.certificateStatus === 'ACTIVE' ? (
+              {hasLoadedCert ? (
                 <span className="text-emerald-600 flex items-center gap-1 font-medium">
-                  <ShieldCheck className="w-3.5 h-3.5" /> Certificado A1 Válido
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  {certSource === 'server_env' ? 'Certificado A1 (Servidor)' : 'Certificado A1 Ativo'}
                 </span>
               ) : (
                 <button
@@ -67,7 +76,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
                   }}
                   className="text-amber-600 hover:text-amber-800 flex items-center gap-1 font-medium underline"
                 >
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" /> Certificado A1 Pendente
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500" /> Carregar Certificado A1
                 </button>
               )}
             </div>
@@ -97,9 +106,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
 
         {/* Help icon */}
         <button 
-          onClick={() => alert("Central de Ajuda TributoFlow: Documentação completa para emissão de notas fiscais, regras de alíquotas do Simples Nacional/Lucro Presumido e integração com Kiwify e Hotmart.")}
+          onClick={() => setCurrentView('configuracoes')}
           className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
-          title="Central de Ajuda"
+          title="Configurações Fiscais & Padrão Nacional NFS-e"
         >
           <HelpCircle className="w-5 h-5" />
         </button>

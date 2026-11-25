@@ -20,7 +20,6 @@ export const DashboardView: React.FC = () => {
     sales, 
     dateFilter, 
     setDateFilter, 
-    emitBatchInvoices, 
     setCurrentView,
     setSelectedInvoiceForDanfe,
     setIsSimulatorOpen 
@@ -72,12 +71,8 @@ export const DashboardView: React.FC = () => {
     };
   });
 
-  const handleEmitAllPending = () => {
-    const pendingIds = pendingInvoices.map(i => i.id);
-    if (pendingIds.length === 0) return;
-    if (confirm(`Deseja emitir e transmitir imediatamente todas as ${pendingIds.length} notas pendentes no valor de R$ ${totalPendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}?`)) {
-      emitBatchInvoices(pendingIds);
-    }
+  const handleGoToEmitPending = () => {
+    setCurrentView('notas');
   };
 
   return (
@@ -206,11 +201,11 @@ export const DashboardView: React.FC = () => {
             </span>
             {pendingInvoices.length > 0 && (
               <button
-                onClick={handleEmitAllPending}
+                onClick={handleGoToEmitPending}
                 className="px-2 py-0.5 rounded bg-white text-amber-800 hover:bg-amber-50 text-[10px] font-bold shadow-xs transition-colors"
-                title="Emitir agora sem esperar o fim da garantia"
+                title="Abrir Notas Fiscais para transmitir à Sefin Nacional"
               >
-                Emitir agora
+                Transmitir na Sefin
               </button>
             )}
           </div>

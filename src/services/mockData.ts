@@ -5,22 +5,22 @@ export const initialCompanySettings: CompanySettings = {
   tradeName: 'CAMPEAO NEGOCIOS DIGITIAS',
   cnpj: '40.731.222/0001-07',
   stateRegistration: '264108787',
-  municipalRegistration: '',
+  municipalRegistration: '1618',
   crt: 'Simples Nacional',
   specialRegime: 'Microempresário e Empresa de Pequeno Porte (ME EPP)',
   simplesApuracaoRegime: 'Regime de apuração dos tributos federais e municipal pelo SN',
   email: 'campeao.mkt.user@gmail.com',
   phone: '(69) 9265-3785',
   mobile: '(69) 99265-3785',
-  municipalProvider: 'BETHA',
-  fiscalEnvironment: 'PRODUCAO',
+  municipalProvider: 'PADRAO_NACIONAL',
+  fiscalEnvironment: 'HOMOLOGACAO',
   taxRegime: 'SIMPLES_NACIONAL',
   simplesAnexo: 'ANEXO_III',
   fatorRActive: true,
   rbt12: 0,
   payroll12: 0,
   defaultIssRate: 2.0,
-  serviceCode: '01.07', // Suporte técnico, consultoria em TI e serviços digitais
+  serviceCode: '010701', // cTribNac 6 dígitos: 01.07.01 - Suporte técnico e serviços digitais
   cnaePrincipal: '6202-3/00', // Desenvolvimento e licenciamento de softwares e infoprodutos
   address: {
     zipCode: '88475-000',
@@ -35,7 +35,7 @@ export const initialCompanySettings: CompanySettings = {
   accountantEmail: 'contabilidade@empresa.com.br',
   accountantToken: 'ACC-TOKEN-SECURE',
   certificateStatus: 'MISSING',
-  certificateExpiryDate: '2027-12-31',
+  certificateExpiryDate: '',
 };
 
 // All platforms start disconnected (enabled: false)

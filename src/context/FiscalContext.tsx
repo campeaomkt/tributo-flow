@@ -16,7 +16,15 @@ import {
   initialMonthlyClosings 
 } from '../services/mockData';
 import { calculateTaxes } from '../services/taxCalculator';
-import { transmitDirectToPrefeitura, DirectTransmissionResult } from '../services/directTransmitter';
+import {
+  transmitDirectToPrefeitura,
+  cancelNfseDirect,
+  consultNfseDirect,
+  downloadOfficialDanfse,
+  fetchServerCertStatus,
+  DirectTransmissionResult,
+  ServerCertStatus,
+} from '../services/directTransmitter';
 
 interface DateFilter {
   start: string;
@@ -44,18 +52,27 @@ interface FiscalContextType {
   setIsCompanyModalOpen: (open: boolean) => void;
   selectedInvoiceForSoapLogs: FiscalInvoice | null;
   setSelectedInvoiceForSoapLogs: (inv: FiscalInvoice | null) => void;
-  
+
+  // In-memory A1 certificate state (never persisted to localStorage)
+  hasLoadedCert: boolean;
+  certSource: 'memory' | 'server_env' | 'none';
+  serverCertStatus: ServerCertStatus;
+  setInMemoryCertificate: (pfxBase64: string, password: string) => void;
+  clearInMemoryCertificate: () => void;
+
   // Actions
   updateCompany: (settings: Partial<CompanySettings>) => void;
   updatePlatform: (platformId: PlatformId, config: Partial<PlatformConfig>) => void;
   emitInvoice: (invoiceId: string) => void;
   emitBatchInvoices: (invoiceIds: string[]) => void;
   transmitInvoiceDirect: (
-    invoiceId: string, 
-    provider?: MunicipalProvider, 
+    invoiceId: string,
+    provider?: MunicipalProvider,
     environment?: FiscalEnvironment
   ) => Promise<DirectTransmissionResult>;
-  cancelInvoice: (invoiceId: string, reason: string) => void;
+  cancelInvoice: (invoiceId: string, reason: string) => Promise<{ success: boolean; message: string }>;
+  consultInvoiceSefin: (invoiceId: string) => Promise<{ success: boolean; message: string; nfseXml?: string }>;
+  downloadOfficialDanfsePdf: (invoiceId: string) => Promise<{ success: boolean; message: string }>;
   simulateSale: (saleInput: {
     platform: PlatformId;
     productName: string;
@@ -82,7 +99,7 @@ interface FiscalContextType {
 const FiscalContext = createContext<FiscalContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  COMPANY: 'tributoflow_company_v7',
+  COMPANY: 'tributoflow_company_v8',
   PLATFORMS: 'tributoflow_platforms_v7',
   SALES: 'tributoflow_sales_v7',
   INVOICES: 'tributoflow_invoices_v7',
@@ -91,12 +108,65 @@ const STORAGE_KEYS = {
 
 export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [company, setCompany] = useState<CompanySettings>(() => {
-    const saved = 
-      localStorage.getItem(STORAGE_KEYS.COMPANY) || 
-      localStorage.getItem('tributoflow_company_v6') || 
+    const savedV8 = localStorage.getItem(STORAGE_KEYS.COMPANY);
+    if (savedV8) {
+      try {
+        const parsed = JSON.parse(savedV8);
+        return {
+          ...initialCompanySettings,
+          ...parsed,
+          municipalRegistration: parsed.municipalRegistration || '1618',
+          certificatePassword: undefined, // Never hydrate secret from localStorage
+        };
+      } catch {
+        return initialCompanySettings;
+      }
+    }
+    const legacy =
+      localStorage.getItem('tributoflow_company_v7') ||
+      localStorage.getItem('tributoflow_company_v6') ||
       localStorage.getItem('tributoflow_company_v5');
-    return saved ? JSON.parse(saved) : initialCompanySettings;
+    if (legacy) {
+      try {
+        const parsed = JSON.parse(legacy);
+        return {
+          ...initialCompanySettings,
+          ...parsed,
+          municipalRegistration: parsed.municipalRegistration || '1618',
+          municipalProvider: 'PADRAO_NACIONAL',
+          fiscalEnvironment: 'HOMOLOGACAO',
+          serviceCode: parsed.serviceCode === '01.07' ? '010701' : (parsed.serviceCode || '010701'),
+          certificateStatus: 'MISSING',
+          certificatePassword: undefined,
+        };
+      } catch {
+        return initialCompanySettings;
+      }
+    }
+    return initialCompanySettings;
   });
+
+  // Strictly in-memory certificate credentials (never stored in localStorage)
+  const [certPfxBase64, setCertPfxBase64] = useState<string>('');
+  const [certPasswordMem, setCertPasswordMem] = useState<string>('');
+  const [serverCertStatus, setServerCertStatus] = useState<ServerCertStatus>({ configured: false });
+
+  const certSource: 'memory' | 'server_env' | 'none' = certPfxBase64
+    ? 'memory'
+    : serverCertStatus.configured
+    ? 'server_env'
+    : 'none';
+  const hasLoadedCert = certSource !== 'none';
+
+  const setInMemoryCertificate = (pfxBase64: string, password: string) => {
+    setCertPfxBase64(pfxBase64);
+    setCertPasswordMem(password);
+  };
+
+  const clearInMemoryCertificate = () => {
+    setCertPfxBase64('');
+    setCertPasswordMem('');
+  };
 
   const [platforms, setPlatforms] = useState<PlatformConfig[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.PLATFORMS);
@@ -143,9 +213,28 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState<boolean>(false);
 
-  // Sync to localStorage
+  // Check if server-side environment certificate is configured
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.COMPANY, JSON.stringify(company));
+    fetchServerCertStatus().then(status => {
+      setServerCertStatus(status);
+      if (status.configured) {
+        setCompany(prev => ({
+          ...prev,
+          certificateStatus: status.isExpired ? 'EXPIRED' : 'ACTIVE',
+          certificateSubject: status.subjectCN,
+          certificateIssuer: status.issuerCN,
+          certificateCnpj: status.cnpj,
+          certificateExpiryDate: status.validTo ? status.validTo.slice(0, 10) : prev.certificateExpiryDate,
+          certificateFileName: prev.certificateFileName || 'Variável de Ambiente (Servidor)',
+        }));
+      }
+    });
+  }, []);
+
+  // Sync to localStorage (explicitly strip certificatePassword so secrets are never written to browser storage)
+  useEffect(() => {
+    const { certificatePassword: _omit, ...safeCompany } = company;
+    localStorage.setItem(STORAGE_KEYS.COMPANY, JSON.stringify(safeCompany));
   }, [company]);
 
   useEffect(() => {
@@ -231,61 +320,119 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const transmitInvoiceDirect = async (
-    invoiceId: string, 
-    provider: MunicipalProvider = company.municipalProvider || 'BETHA',
-    environment: FiscalEnvironment = company.fiscalEnvironment || 'PRODUCAO'
+    invoiceId: string,
+    provider: MunicipalProvider = 'PADRAO_NACIONAL',
+    environment: FiscalEnvironment = company.fiscalEnvironment || 'HOMOLOGACAO'
   ): Promise<DirectTransmissionResult> => {
     const inv = invoices.find(i => i.id === invoiceId);
     if (!inv) throw new Error('Nota fiscal não encontrada.');
 
-    const result = await transmitDirectToPrefeitura(inv, company, provider, environment);
-
-    setInvoices(prev =>
-      prev.map(i => {
-        if (i.id !== invoiceId) return i;
-        return {
-          ...i,
-          status: 'EMITIDA',
-          issuedAt: result.authorizedAt,
-          transmissionMode: 'DIRETO_PREFEITURA',
-          municipalProvider: provider,
-          municipalProtocol: result.municipalProtocol,
-          officialInvoiceNumber: result.officialNumber,
-          municipalAuthCode: result.municipalAuthCode,
-          municipalUrl: result.municipalUrl,
-          authorizedAt: result.authorizedAt,
-          soapRequestXml: result.soapRequestXml,
-          soapResponseXml: result.soapResponseXml,
-          signedXml: result.signedXml,
-          verificationCode: result.municipalAuthCode,
-          number: result.officialNumber.replace('/', ''),
-          scheduledFor: undefined,
-          emailSent: true,
-        };
-      })
+    const result = await transmitDirectToPrefeitura(
+      inv,
+      company,
+      provider,
+      environment,
+      certPfxBase64 || undefined,
+      certPasswordMem || undefined
     );
 
-    setSales(prev =>
-      prev.map(s => {
-        if (s.invoiceId === invoiceId) {
-          return { ...s, invoiceStatus: 'EMITIDA' };
-        }
-        return s;
-      })
-    );
+    if (result.success) {
+      setInvoices(prev =>
+        prev.map(i => {
+          if (i.id !== invoiceId) return i;
+          return {
+            ...i,
+            status: 'EMITIDA',
+            issuedAt: result.authorizedAt,
+            transmissionMode: 'DIRETO_PREFEITURA',
+            municipalProvider: 'PADRAO_NACIONAL',
+            environment: result.environment,
+            municipalProtocol: result.municipalProtocol,
+            officialInvoiceNumber: result.officialNumber,
+            municipalAuthCode: result.chaveAcesso || result.municipalAuthCode,
+            chaveAcessoNacional: result.chaveAcesso,
+            dpsId: result.dpsId,
+            nfseXmlNacional: result.nfseXml,
+            sefinEndpointUrl: result.endpointUrl,
+            municipalUrl: result.municipalUrl,
+            authorizedAt: result.authorizedAt,
+            soapRequestXml: result.soapRequestXml,
+            soapResponseXml: result.soapResponseXml,
+            signedXml: result.signedXml,
+            verificationCode: result.chaveAcesso || result.municipalAuthCode,
+            accessKey: result.chaveAcesso || i.accessKey,
+            number: result.officialNumber.replace('/', ''),
+            scheduledFor: undefined,
+            sefinErrors: [],
+            lastTransmissionError: undefined,
+            emailSent: true,
+          };
+        })
+      );
+
+      setSales(prev =>
+        prev.map(s => {
+          if (s.invoiceId === invoiceId) {
+            return { ...s, invoiceStatus: 'EMITIDA' };
+          }
+          return s;
+        })
+      );
+    } else {
+      // Never fake EMITIDA — keep PENDENTE and store the real Sefin Nacional rejection + signed XML for inspection
+      setInvoices(prev =>
+        prev.map(i => {
+          if (i.id !== invoiceId) return i;
+          return {
+            ...i,
+            status: 'PENDENTE',
+            municipalProvider: 'PADRAO_NACIONAL',
+            environment: result.environment,
+            dpsId: result.dpsId || i.dpsId,
+            sefinEndpointUrl: result.endpointUrl,
+            soapRequestXml: result.soapRequestXml || i.soapRequestXml,
+            soapResponseXml: result.soapResponseXml || i.soapResponseXml,
+            signedXml: result.signedXml || i.signedXml,
+            sefinErrors: result.errors,
+            lastTransmissionError: result.message,
+          };
+        })
+      );
+    }
 
     return result;
   };
 
-  const cancelInvoice = (invoiceId: string, reason: string) => {
+  const cancelInvoice = async (
+    invoiceId: string,
+    reason: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const inv = invoices.find(i => i.id === invoiceId);
     const now = new Date();
     const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    
+
+    // If invoice was genuinely authorized on Sefin Nacional, transmit official Event e101101
+    if (inv?.chaveAcessoNacional) {
+      const cancelRes = await cancelNfseDirect({
+        chaveAcesso: inv.chaveAcessoNacional,
+        cnpjAutor: company.cnpj,
+        motivoDesc: reason,
+        motivoCode: '2',
+        environment: inv.environment || company.fiscalEnvironment || 'HOMOLOGACAO',
+        pfxBase64: certPfxBase64 || undefined,
+        certPassword: certPasswordMem || undefined,
+      });
+
+      if (!cancelRes.success) {
+        return { success: false, message: cancelRes.message };
+      }
+    }
+
     setInvoices(prev =>
-      prev.map(inv => {
-        if (inv.id !== invoiceId) return inv;
+      prev.map(item => {
+        if (item.id !== invoiceId) return item;
         return {
-          ...inv,
+          ...item,
           status: 'CANCELADA',
           cancelledAt: formattedDate,
           cancellationReason: reason,
@@ -301,6 +448,58 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return s;
       })
     );
+
+    return { success: true, message: 'NFS-e cancelada com sucesso.' };
+  };
+
+  const consultInvoiceSefin = async (invoiceId: string) => {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv?.chaveAcessoNacional) {
+      return { success: false, message: 'Esta nota ainda não possui Chave de Acesso autorizada pela Sefin Nacional.' };
+    }
+    const res = await consultNfseDirect({
+      chaveAcesso: inv.chaveAcessoNacional,
+      environment: inv.environment || company.fiscalEnvironment || 'HOMOLOGACAO',
+      pfxBase64: certPfxBase64 || undefined,
+      certPassword: certPasswordMem || undefined,
+    });
+    if (res.success && res.nfseXml) {
+      setInvoices(prev =>
+        prev.map(i => (i.id === invoiceId ? { ...i, nfseXmlNacional: res.nfseXml, soapResponseXml: res.nfseXml } : i))
+      );
+    }
+    return { success: res.success, message: res.message, nfseXml: res.nfseXml };
+  };
+
+  const downloadOfficialDanfsePdf = async (invoiceId: string) => {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv?.chaveAcessoNacional) {
+      return { success: false, message: 'Esta nota ainda não possui Chave de Acesso autorizada pela Sefin Nacional.' };
+    }
+    const res = await downloadOfficialDanfse({
+      chaveAcesso: inv.chaveAcessoNacional,
+      environment: inv.environment || company.fiscalEnvironment || 'HOMOLOGACAO',
+      pfxBase64: certPfxBase64 || undefined,
+      certPassword: certPasswordMem || undefined,
+    });
+    if (res.success && res.pdfBase64) {
+      const byteCharacters = atob(res.pdfBase64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DANFSe_${inv.officialInvoiceNumber || inv.number}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return { success: true, message: 'DANFSe oficial (PDF) baixado do ADN Nacional!' };
+    }
+    return { success: false, message: res.message };
   };
 
   const simulateSale = (input: {
@@ -324,12 +523,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const saleId = `sale_sim_${Date.now()}`;
     const invId = `inv_sim_${Date.now()}`;
 
-    // Should invoice be issued immediately or queued for warranty?
-    const isImmediate = 
-      platform?.trigger === 'on_payment_approved' || 
-      platform?.trigger === 'on_created';
-
-    const invStatus: 'EMITIDA' | 'PENDENTE' = isImmediate ? 'EMITIDA' : 'PENDENTE';
+    // Always stay PENDENTE until actually authorized by Sefin Nacional
+    const invStatus: 'EMITIDA' | 'PENDENTE' = 'PENDENTE';
 
     const newSale: Sale = {
       id: saleId,
@@ -357,21 +552,21 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     const taxes = calculateTaxes(input.amount, company);
-    const invoiceNum = (20260000500 + invoices.length).toString();
+    const invoiceNum = (20260000001 + invoices.length).toString();
 
     const newInvoice: FiscalInvoice = {
       id: invId,
       number: invoiceNum,
       series: '1',
-      rpsNumber: (8500 + invoices.length).toString(),
-      verificationCode: `VER-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+      rpsNumber: (8501 + invoices.length).toString(),
+      verificationCode: 'PENDENTE',
       accessKey: `352610${company.cnpj.replace(/\D/g, '')}5500100000${invoiceNum}100918231`,
       saleId: saleId,
       platform: input.platform,
       model: platform?.invoiceModel || 'NFS-e',
       status: invStatus,
       issuedAt: formattedDate,
-      scheduledFor: isImmediate ? undefined : `${formattedWarranty} (Fim da Garantia)`,
+      scheduledFor: `${formattedWarranty} (Aguardando Transmissão Sefin)`,
       customer: newSale.customer,
       productName: input.productName,
       description: `Licenciamento e acesso a plataforma de conteúdo digital: ${input.productName}`,
@@ -380,7 +575,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       grossAmount: input.amount,
       netAmount: input.amount - taxes.totalTax,
       taxes,
-      emailSent: isImmediate && !!platform?.sendEmailToCustomer,
+      emailSent: false,
     };
 
     setSales(prev => [newSale, ...prev]);
@@ -721,12 +916,19 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsSimulatorOpen,
         isCompanyModalOpen,
         setIsCompanyModalOpen,
+        hasLoadedCert,
+        certSource,
+        serverCertStatus,
+        setInMemoryCertificate,
+        clearInMemoryCertificate,
         updateCompany,
         updatePlatform,
         emitInvoice,
         emitBatchInvoices,
         transmitInvoiceDirect,
         cancelInvoice,
+        consultInvoiceSefin,
+        downloadOfficialDanfsePdf,
         simulateSale,
         simulateRefund,
         processKiwifyWebhook,

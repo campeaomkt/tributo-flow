@@ -1,12 +1,20 @@
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import {
+  parsePfxCertificate,
+  hasServerEnvCert,
+  transmitDpsToSefin,
+  cancelNfseOnSefin,
+  consultNfseOnSefin,
+  fetchOfficialDanfsePdf,
+} from './server/sefinNacional';
 
 async function startServer() {
   const app = express();
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Support JSON and URL encoded bodies from Kiwify/Hotmart webhooks
+  // Support JSON and URL encoded bodies from Kiwify/Hotmart webhooks and PFX payloads
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -16,6 +24,156 @@ async function startServer() {
   // Health check endpoint
   app.get('/api/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+  });
+
+  // Check if a server-side A1 certificate is configured via environment variables
+  app.get('/api/nfse/cert-status', (req: Request, res: Response) => {
+    const configured = hasServerEnvCert();
+    if (!configured) {
+      return res.status(200).json({ configured: false });
+    }
+    try {
+      const parsed = parsePfxCertificate(
+        process.env.NFSE_PFX_BASE64 || '',
+        process.env.NFSE_CERT_PASSWORD || ''
+      );
+      return res.status(200).json({
+        configured: true,
+        subjectCN: parsed.subjectCN,
+        issuerCN: parsed.issuerCN,
+        cnpj: parsed.cnpj,
+        validFrom: parsed.validFrom,
+        validTo: parsed.validTo,
+        isExpired: parsed.isExpired,
+      });
+    } catch (err: any) {
+      return res.status(200).json({
+        configured: false,
+        error: err?.message || 'Certificado de ambiente inválido',
+      });
+    }
+  });
+
+  // Validate a user-uploaded .pfx/.p12 certificate and password (returns metadata only, never secrets)
+  app.post('/api/nfse/validate-cert', (req: Request, res: Response) => {
+    try {
+      const { pfxBase64, password } = req.body || {};
+      if (typeof pfxBase64 !== 'string' || !pfxBase64.trim()) {
+        return res.status(400).json({ success: false, error: 'Arquivo .pfx/.p12 não fornecido.' });
+      }
+      if (typeof password !== 'string' || !password.trim()) {
+        return res.status(400).json({ success: false, error: 'Senha do certificado obrigatória.' });
+      }
+      const parsed = parsePfxCertificate(pfxBase64, password);
+      return res.status(200).json({
+        success: true,
+        subjectCN: parsed.subjectCN,
+        issuerCN: parsed.issuerCN,
+        serialNumber: parsed.serialNumber,
+        cnpj: parsed.cnpj,
+        validFrom: parsed.validFrom,
+        validTo: parsed.validTo,
+        isExpired: parsed.isExpired,
+      });
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        error: err?.message || 'Erro ao validar o Certificado Digital A1.',
+      });
+    }
+  });
+
+  // Transmit DPS to real Sefin Nacional API (Produção Restrita / Produção) via mTLS
+  app.post('/api/nfse/transmit', async (req: Request, res: Response) => {
+    try {
+      const { dpsInput, pfxBase64, certPassword } = req.body || {};
+      if (!dpsInput || typeof dpsInput !== 'object') {
+        return res.status(400).json({ success: false, message: 'Dados da DPS não enviados.' });
+      }
+      const result = await transmitDpsToSefin(dpsInput, pfxBase64, certPassword);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        httpStatus: 0,
+        errors: [{ codigo: 'CLIENT_ERR', descricao: err?.message || 'Erro na transmissão para a Sefin Nacional.' }],
+        message: err?.message || 'Erro na transmissão para a Sefin Nacional.',
+      });
+    }
+  });
+
+  // Cancel authorized NFS-e via Event e101101 on Sefin Nacional
+  app.post('/api/nfse/cancel', async (req: Request, res: Response) => {
+    try {
+      const { chaveAcesso, cnpjAutor, motivoCode, motivoDesc, environment, pfxBase64, certPassword } = req.body || {};
+      if (typeof chaveAcesso !== 'string' || !chaveAcesso.trim()) {
+        return res.status(400).json({ success: false, message: 'Chave de acesso da NFS-e é obrigatória.' });
+      }
+      const result = await cancelNfseOnSefin({
+        chaveAcesso,
+        cnpjAutor: String(cnpjAutor || ''),
+        motivoCode: motivoCode === '1' || motivoCode === '2' || motivoCode === '9' ? motivoCode : '2',
+        motivoDesc: String(motivoDesc || 'Cancelamento solicitado'),
+        environment: environment === 'PRODUCAO' ? 'PRODUCAO' : 'HOMOLOGACAO',
+        pfxBase64,
+        certPassword,
+      });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        httpStatus: 0,
+        errors: [{ codigo: 'CANCEL_ERR', descricao: err?.message || 'Erro ao cancelar na Sefin Nacional.' }],
+        message: err?.message || 'Erro ao cancelar na Sefin Nacional.',
+      });
+    }
+  });
+
+  // Consult NFS-e directly on Sefin Nacional by chaveAcesso
+  app.post('/api/nfse/consult', async (req: Request, res: Response) => {
+    try {
+      const { chaveAcesso, environment, pfxBase64, certPassword } = req.body || {};
+      if (typeof chaveAcesso !== 'string' || !chaveAcesso.trim()) {
+        return res.status(400).json({ success: false, message: 'Chave de acesso obrigatória.' });
+      }
+      const result = await consultNfseOnSefin({
+        chaveAcesso,
+        environment: environment === 'PRODUCAO' ? 'PRODUCAO' : 'HOMOLOGACAO',
+        pfxBase64,
+        certPassword,
+      });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        httpStatus: 0,
+        errors: [{ codigo: 'CONSULT_ERR', descricao: err?.message || 'Erro ao consultar na Sefin Nacional.' }],
+        message: err?.message || 'Erro ao consultar na Sefin Nacional.',
+      });
+    }
+  });
+
+  // Download official government DANFSe PDF from ADN Nacional
+  app.post('/api/nfse/danfse', async (req: Request, res: Response) => {
+    try {
+      const { chaveAcesso, environment, pfxBase64, certPassword } = req.body || {};
+      if (typeof chaveAcesso !== 'string' || !chaveAcesso.trim()) {
+        return res.status(400).json({ success: false, message: 'Chave de acesso obrigatória.' });
+      }
+      const result = await fetchOfficialDanfsePdf({
+        chaveAcesso,
+        environment: environment === 'PRODUCAO' ? 'PRODUCAO' : 'HOMOLOGACAO',
+        pfxBase64,
+        certPassword,
+      });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        httpStatus: 0,
+        message: err?.message || 'Erro ao baixar DANFSe oficial do ADN Nacional.',
+      });
+    }
   });
 
   // Query received webhook events for frontend live sync

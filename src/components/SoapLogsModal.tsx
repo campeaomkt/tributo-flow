@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
 import { FiscalInvoice } from '../types';
-import { X, Check, Copy, ExternalLink, ShieldCheck, FileCode, Send, ArrowRight } from 'lucide-react';
+import { useFiscal } from '../context/FiscalContext';
+import {
+  X,
+  Check,
+  Copy,
+  ExternalLink,
+  ShieldCheck,
+  Send,
+  AlertTriangle,
+  Clock,
+  Globe,
+  FileCode,
+} from 'lucide-react';
 
 interface SoapLogsModalProps {
   invoice: FiscalInvoice;
@@ -8,113 +20,50 @@ interface SoapLogsModalProps {
 }
 
 export const SoapLogsModal: React.FC<SoapLogsModalProps> = ({ invoice, onClose }) => {
+  const { company } = useFiscal();
   const [activeTab, setActiveTab] = useState<'response' | 'request' | 'signature'>('response');
   const [copied, setCopied] = useState(false);
 
-  const soapRequest = invoice.soapRequestXml || `<!-- Envelope SOAP de Envio gerado pelo TributoFlow -->
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:e="http://www.betha.com.br/e-nota-contribuinte-ws">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <e:RecepcionarLoteRpsEnvio>
-      <LoteRps Id="lote_2026114201007" versao="2.02">
-        <NumeroLote>2026114201007</NumeroLote>
-        <CpfCnpj><Cnpj>40731222000107</Cnpj></CpfCnpj>
-        <InscricaoMunicipal>88475001</InscricaoMunicipal>
-        <QuantidadeRps>1</QuantidadeRps>
-        <ListaRps>
-          <!-- RPS Assinado com Certificado A1 XMLDSig -->
-          <Rps xmlns="http://www.abrasf.org.br/nfse.xsd">
-            <InfDeclaracaoPrestacaoServico Id="RPS_${invoice.rpsNumber || '8501'}">
-              <Rps>
-                <IdentificacaoRps>
-                  <Numero>${invoice.rpsNumber || '8501'}</Numero>
-                  <Serie>1</Serie>
-                  <Tipo>1</Tipo>
-                </IdentificacaoRps>
-                <DataEmissao>${invoice.issuedAt.slice(0, 10)}T${invoice.issuedAt.slice(11, 19)}</DataEmissao>
-                <Status>1</Status>
-              </Rps>
-              <Servico>
-                <Valores>
-                  <ValorServicos>${invoice.grossAmount.toFixed(2)}</ValorServicos>
-                  <ValorIss>${invoice.taxes.issAmount.toFixed(2)}</ValorIss>
-                  <Aliquota>${(invoice.taxes.issRate / 100).toFixed(4)}</Aliquota>
-                </Valores>
-                <ItemListaServico>${invoice.serviceCode}</ItemListaServico>
-                <Discriminacao>${invoice.description}</Discriminacao>
-                <CodigoMunicipio>4201007</CodigoMunicipio>
-              </Servico>
-              <Prestador>
-                <CpfCnpj><Cnpj>40731222000107</Cnpj></CpfCnpj>
-              </Prestador>
-              <Tomador>
-                <IdentificacaoTomador>
-                  <CpfCnpj><Cpf>${invoice.customer.document.replace(/\D/g, '')}</Cpf></CpfCnpj>
-                </IdentificacaoTomador>
-                <RazaoSocial>${invoice.customer.name}</RazaoSocial>
-              </Tomador>
-            </InfDeclaracaoPrestacaoServico>
-            <!-- Signature XMLDSig SHA-1 RSA -->
-            <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
-              <SignedInfo>
-                <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
-                <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
-              </SignedInfo>
-              <SignatureValue>MC0CFQCgG...</SignatureValue>
-            </Signature>
-          </Rps>
-        </ListaRps>
-      </LoteRps>
-    </e:RecepcionarLoteRpsEnvio>
-  </soapenv:Body>
-</soapenv:Envelope>`;
+  const env = invoice.environment || company.fiscalEnvironment || 'HOMOLOGACAO';
+  const isHomologacao = env === 'HOMOLOGACAO';
+  const isAuthorized = invoice.status === 'EMITIDA' && Boolean(invoice.chaveAcessoNacional);
+  const hasErrors = Boolean(
+    invoice.lastTransmissionError || (invoice.sefinErrors && invoice.sefinErrors.length > 0)
+  );
 
-  const soapResponse = invoice.soapResponseXml || `<?xml version="1.0" encoding="UTF-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <EnviarLoteRpsResposta xmlns="http://www.abrasf.org.br/nfse.xsd">
-      <NumeroLote>2026114201007</NumeroLote>
-      <DataRecebimento>${invoice.authorizedAt || invoice.issuedAt}</DataRecebimento>
-      <Protocolo>${invoice.municipalProtocol || 'PROTOCOLO-BET-2026114201007'}</Protocolo>
-      <ListaNfse>
-        <CompNfse>
-          <Nfse versao="2.02">
-            <InfNfse Id="NFSE_202600018">
-              <Numero>${invoice.officialInvoiceNumber || '2026/00018'}</Numero>
-              <CodigoVerificacao>${invoice.verificationCode || 'VER-KW78-AEVO'}</CodigoVerificacao>
-              <DataEmissao>${invoice.authorizedAt || invoice.issuedAt}</DataEmissao>
-              <IdentificacaoRps>
-                <Numero>${invoice.rpsNumber || '8501'}</Numero>
-                <Serie>1</Serie>
-                <Tipo>1</Tipo>
-              </IdentificacaoRps>
-              <ValoresNfse>
-                <BaseCalculo>${invoice.grossAmount.toFixed(2)}</BaseCalculo>
-                <Aliquota>${(invoice.taxes.issRate / 100).toFixed(4)}</Aliquota>
-                <ValorIss>${invoice.taxes.issAmount.toFixed(2)}</ValorIss>
-                <ValorLiquidoNfse>${invoice.netAmount.toFixed(2)}</ValorLiquidoNfse>
-              </ValoresNfse>
-              <LinkConsulta>${invoice.municipalUrl || 'https://e-gov.betha.com.br/e-nota/consulta?cod=VER-KW78-AEVO&mun=4201007'}</LinkConsulta>
-            </InfNfse>
-          </Nfse>
-        </CompNfse>
-      </ListaNfse>
-    </EnviarLoteRpsResposta>
-  </soap:Body>
-</soap:Envelope>`;
+  const defaultEndpoint = isHomologacao
+    ? 'https://sefin.producaorestrita.nfse.gov.br/SefinNacional/nfse'
+    : 'https://sefin.nfse.gov.br/SefinNacional/nfse';
+
+  const portalUrl =
+    invoice.municipalUrl ||
+    (isHomologacao
+      ? 'https://www.producaorestrita.nfse.gov.br/EmissorNacional'
+      : 'https://www.nfse.gov.br/ConsultaPublica');
+
+  const responsePayload =
+    invoice.nfseXmlNacional ||
+    invoice.soapResponseXml ||
+    '';
+
+  const requestPayload = invoice.soapRequestXml || '';
 
   const handleCopy = () => {
-    const textToCopy = activeTab === 'response' ? soapResponse : soapRequest;
+    const textToCopy = activeTab === 'response' ? responsePayload : requestPayload;
+    if (!textToCopy) return;
     navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div 
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6 overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]"
-        onClick={e => e.stopPropagation()}
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-6 overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-purple-950 to-indigo-950 text-white flex items-center justify-between">
@@ -123,93 +72,154 @@ export const SoapLogsModal: React.FC<SoapLogsModalProps> = ({ invoice, onClose }
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-bold text-base">Transmissão Direta com a Prefeitura</h2>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold text-[10px] border border-emerald-500/30">
-                  {invoice.municipalProvider || 'Betha Sistemas'} (Anitápolis - SC)
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-bold text-base">Logs da API Sefin Nacional (NFS-e)</h2>
+                <span
+                  className={`px-2 py-0.5 rounded-full font-semibold text-[10px] border ${
+                    isHomologacao
+                      ? 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  }`}
+                >
+                  {isHomologacao ? 'Homologação (Produção Restrita)' : 'Produção Oficial'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-white/10 text-slate-200 font-medium text-[10px]">
+                  Anitápolis/SC • IBGE 4201109
                 </span>
               </div>
-              <p className="text-xs text-purple-200">
-                NFS-e Nº {invoice.officialInvoiceNumber || invoice.number} • RPS {invoice.rpsNumber} • {invoice.customer.name}
+              <p className="text-xs text-purple-200 mt-0.5">
+                {invoice.officialInvoiceNumber
+                  ? `NFS-e Nº ${invoice.officialInvoiceNumber}`
+                  : `DPS #${invoice.rpsNumber}`}{' '}
+                • Tomador: {invoice.customer.name}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+            aria-label="Fechar logs"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Transmission Summary Banner */}
-        <div className="p-4 bg-emerald-50/60 border-b border-emerald-200/80 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div
+          className={`p-4 border-b grid grid-cols-1 md:grid-cols-4 gap-3 text-xs ${
+            isAuthorized
+              ? 'bg-emerald-50/70 border-emerald-200'
+              : hasErrors
+              ? 'bg-rose-50/70 border-rose-200'
+              : 'bg-amber-50/70 border-amber-200'
+          }`}
+        >
           <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold">Status WebService</span>
-            <p className="font-bold text-emerald-800 flex items-center gap-1">
-              <Check className="w-3.5 h-3.5 text-emerald-600" /> Autorizada no Município
+            <span className="text-[10px] text-slate-500 uppercase font-bold block">
+              Status Sefin Nacional
+            </span>
+            {isAuthorized ? (
+              <p className="font-bold text-emerald-800 flex items-center gap-1 mt-0.5">
+                <Check className="w-3.5 h-3.5 text-emerald-600" /> Autorizada Oficialmente
+              </p>
+            ) : hasErrors ? (
+              <p className="font-bold text-rose-800 flex items-center gap-1 mt-0.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" /> Rejeitada na Sefin
+              </p>
+            ) : (
+              <p className="font-bold text-amber-800 flex items-center gap-1 mt-0.5">
+                <Clock className="w-3.5 h-3.5 text-amber-600" /> Aguardando Transmissão
+              </p>
+            )}
+          </div>
+
+          <div className="md:col-span-2">
+            <span className="text-[10px] text-slate-500 uppercase font-bold block">
+              {invoice.chaveAcessoNacional ? 'Chave de Acesso Nacional (50 dígitos)' : 'Identificador DPS'}
+            </span>
+            <p
+              className="font-mono font-semibold text-slate-800 text-[11px] break-all mt-0.5"
+              title={invoice.chaveAcessoNacional || invoice.dpsId || ''}
+            >
+              {invoice.chaveAcessoNacional || invoice.dpsId || 'Gerada no momento da transmissão'}
             </p>
           </div>
+
           <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold">Protocolo Municipal</span>
-            <p className="font-mono font-semibold text-slate-800 truncate" title={invoice.municipalProtocol}>
-              {invoice.municipalProtocol || 'PROTOCOLO-BET-202611'}
-            </p>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold">Cód. Verificação</span>
-            <p className="font-mono font-bold text-purple-900">
-              {invoice.verificationCode || 'VER-KW78-AEVO'}
-            </p>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold">Portal da Prefeitura</span>
+            <span className="text-[10px] text-slate-500 uppercase font-bold block">
+              Portal Nacional NFS-e
+            </span>
             <a
-              href={invoice.municipalUrl || `https://e-gov.betha.com.br/e-nota/consulta?cod=${invoice.verificationCode}&mun=4201007`}
+              href={portalUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-purple-700 hover:text-purple-900 font-semibold flex items-center gap-1 underline text-[11px] truncate"
+              className="text-purple-700 hover:text-purple-900 font-semibold flex items-center gap-1 underline text-[11px] mt-0.5"
             >
-              <span>Consultar na Betha</span>
+              <span>{isHomologacao ? 'Abrir Produção Restrita' : 'Consultar no Portal'}</span>
               <ExternalLink className="w-3 h-3 shrink-0" />
             </a>
           </div>
         </div>
 
+        {/* Real Sefin Rejection Errors */}
+        {hasErrors && (
+          <div className="px-6 py-3 bg-rose-50 border-b border-rose-200 text-xs text-rose-900 space-y-1.5">
+            <p className="font-bold flex items-center gap-1.5 text-rose-800">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              Retorno de validação da Sefin Nacional:
+            </p>
+            {invoice.sefinErrors && invoice.sefinErrors.length > 0 ? (
+              <ul className="list-disc pl-5 space-y-1">
+                {invoice.sefinErrors.map((err, idx) => (
+                  <li key={`${err.codigo}-${idx}`}>
+                    <span className="font-mono font-bold text-rose-950">[{err.codigo}]</span>{' '}
+                    <span>{err.descricao}</span>
+                    {err.complemento && (
+                      <span className="text-rose-700"> — {err.complemento}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-rose-800">{invoice.lastTransmissionError}</p>
+            )}
+          </div>
+        )}
+
         {/* Tabs */}
-        <div className="flex border-b border-slate-200 bg-slate-50 text-xs font-semibold px-4 pt-2">
+        <div className="flex border-b border-slate-200 bg-slate-50 text-xs font-semibold px-4 pt-2 overflow-x-auto">
           <button
             onClick={() => setActiveTab('response')}
-            className={`pb-2.5 px-3 border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'response'
                 ? 'border-[#2c0853] text-[#2c0853]'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            <Check className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Retorno Autorizado da Prefeitura (SOAP Response)</span>
+            <FileCode className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Retorno Sefin Nacional (XML / JSON)</span>
           </button>
           <button
             onClick={() => setActiveTab('request')}
-            className={`pb-2.5 px-3 border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'request'
                 ? 'border-[#2c0853] text-[#2c0853]'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Send className="w-3.5 h-3.5 text-purple-600" />
-            <span>Envelope SOAP Enviado (XMLDSig Assinado)</span>
+            <span>DPS XML Assinado (XMLDSig RSA-SHA256)</span>
           </button>
           <button
             onClick={() => setActiveTab('signature')}
-            className={`pb-2.5 px-3 border-b-2 transition-colors flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'signature'
                 ? 'border-[#2c0853] text-[#2c0853]'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-            <span>Criptografia A1 & Digest</span>
+            <span>Parâmetros mTLS & Assinatura A1</span>
           </button>
         </div>
 
@@ -219,19 +229,38 @@ export const SoapLogsModal: React.FC<SoapLogsModalProps> = ({ invoice, onClose }
             <div className="space-y-2">
               <div className="flex items-center justify-between text-slate-600">
                 <span className="font-semibold text-slate-800">
-                  Resposta oficial do WebService Betha Sistemas (Anitápolis/SC):
+                  Resposta real recebida da API Sefin Nacional:
                 </span>
-                <button
-                  onClick={handleCopy}
-                  className="px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-100 flex items-center gap-1 text-[11px]"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'Copiado!' : 'Copiar XML'}</span>
-                </button>
+                {responsePayload && (
+                  <button
+                    onClick={handleCopy}
+                    className="px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-100 flex items-center gap-1 text-[11px]"
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                    <span>{copied ? 'Copiado!' : 'Copiar Retorno'}</span>
+                  </button>
+                )}
               </div>
-              <pre className="p-4 rounded-xl bg-slate-900 text-emerald-300 font-mono text-[11px] overflow-x-auto leading-relaxed border border-slate-800">
-                {soapResponse}
-              </pre>
+              {responsePayload ? (
+                <pre className="p-4 rounded-xl bg-slate-900 text-emerald-300 font-mono text-[11px] overflow-x-auto leading-relaxed border border-slate-800 whitespace-pre-wrap break-all">
+                  {responsePayload}
+                </pre>
+              ) : (
+                <div className="p-6 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-center space-y-1">
+                  <p className="font-semibold text-slate-800">
+                    Nenhuma transmissão realizada ainda para esta DPS.
+                  </p>
+                  <p className="text-[11px]">
+                    Clique em <strong>Testar na Sefin</strong> (Homologação) ou{' '}
+                    <strong>Transmitir Oficial</strong> (Produção) na tela de Notas Fiscais para
+                    gravar o retorno real da API governamental aqui.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -239,50 +268,95 @@ export const SoapLogsModal: React.FC<SoapLogsModalProps> = ({ invoice, onClose }
             <div className="space-y-2">
               <div className="flex items-center justify-between text-slate-600">
                 <span className="font-semibold text-slate-800">
-                  Envelope SOAP enviado para o endpoint municipal com assinatura digital:
+                  XML da DPS (versão 1.00) assinado digitalmente e enviado compactado em GZip + Base64:
                 </span>
-                <button
-                  onClick={handleCopy}
-                  className="px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-100 flex items-center gap-1 text-[11px]"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'Copiado!' : 'Copiar XML'}</span>
-                </button>
+                {requestPayload && (
+                  <button
+                    onClick={handleCopy}
+                    className="px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-100 flex items-center gap-1 text-[11px]"
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                    <span>{copied ? 'Copiado!' : 'Copiar XML'}</span>
+                  </button>
+                )}
               </div>
-              <pre className="p-4 rounded-xl bg-slate-900 text-purple-200 font-mono text-[11px] overflow-x-auto leading-relaxed border border-slate-800">
-                {soapRequest}
-              </pre>
+              {requestPayload ? (
+                <pre className="p-4 rounded-xl bg-slate-900 text-purple-200 font-mono text-[11px] overflow-x-auto leading-relaxed border border-slate-800 whitespace-pre-wrap break-all">
+                  {requestPayload}
+                </pre>
+              ) : (
+                <div className="p-6 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-center space-y-1">
+                  <p className="font-semibold text-slate-800">
+                    XML assinado ainda não foi gerado.
+                  </p>
+                  <p className="text-[11px]">
+                    O XML da DPS é montado e assinado com seu Certificado Digital A1 no servidor
+                    no instante da transmissão.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           {activeTab === 'signature' && (
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <h4 className="font-bold text-slate-800 text-sm">Parâmetros Criptográficos da Transmissão Direta</h4>
-                
+                <h4 className="font-bold text-slate-800 text-sm">
+                  Parâmetros Técnicos da Integração Sefin Nacional
+                </h4>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="p-3 bg-white rounded-lg border border-slate-200">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Algoritmo de Assinatura</span>
-                    <p className="font-mono font-bold text-slate-800">RSA-SHA1 (Padrão ABRASF XMLDSig)</p>
-                    <p className="text-slate-500 text-[11px] mt-0.5">Canonicalization C14N sem comentários</p>
+                    <span className="text-[10px] uppercase font-bold text-slate-400">
+                      Assinatura Digital XMLDSig
+                    </span>
+                    <p className="font-mono font-bold text-slate-800">
+                      RSA-SHA256 + Digest SHA-256
+                    </p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Enveloped Signature + Canonicalization C14N (Padrão Nacional v1.00)
+                    </p>
                   </div>
                   <div className="p-3 bg-white rounded-lg border border-slate-200">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Certificado e-CNPJ A1</span>
-                    <p className="font-mono font-bold text-slate-800">CAMPEAO NEGOCIOS DIGITAIS LTDA</p>
-                    <p className="text-slate-500 text-[11px] mt-0.5">CNPJ: 40.731.222/0001-07</p>
+                    <span className="text-[10px] uppercase font-bold text-slate-400">
+                      Transporte & Autenticação
+                    </span>
+                    <p className="font-mono font-bold text-slate-800">
+                      HTTPS mTLS (e-CNPJ A1) + GZip/Base64
+                    </p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Conexão direta exclusivamente aos domínios oficiais nfse.gov.br
+                    </p>
                   </div>
-                </div>
-
-                <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Digest Value do RPS</span>
-                  <p className="font-mono text-[11px] text-purple-900 break-all bg-purple-50 p-2 rounded border border-purple-100">
-                    +r7k8W2q8Z9mO1p2Q3r4s5t6u7v8w9x0y1z2a3b4c5d=
-                  </p>
+                  <div className="p-3 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">
+                      Prestador Configurado
+                    </span>
+                    <p className="font-mono font-bold text-slate-800">{company.corporateName}</p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      CNPJ: {company.cnpj} • IM: {company.municipalRegistration || '1618'} • IBGE: 4201109
+                    </p>
+                  </div>
+                  <div className="p-3 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">
+                      Endpoint Sefin Utilizado
+                    </span>
+                    <p className="font-mono text-[11px] font-semibold text-purple-900 break-all mt-0.5 flex items-start gap-1">
+                      <Globe className="w-3.5 h-3.5 shrink-0 mt-0.5 text-purple-600" />
+                      <span>{invoice.sefinEndpointUrl || defaultEndpoint}</span>
+                    </p>
+                  </div>
                 </div>
               </div>
 
               <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-xs">
-                ℹ️ <strong>Transmissão 100% Autônoma:</strong> Este XML foi assinado e empacotado diretamente pelo seu servidor TributoFlow, sem passar por intermediários como Focus NFe, PlugNotas ou eNotas.
+                <strong>Transmissão Direta Oficial:</strong> O TributoFlow assina a DPS com seu
+                Certificado Digital A1 no servidor e transmite diretamente para a API REST da Sefin
+                Nacional (Receita Federal / CNM / ABRASF), sem intermediários pagos.
               </div>
             </div>
           )}
@@ -291,7 +365,10 @@ export const SoapLogsModal: React.FC<SoapLogsModalProps> = ({ invoice, onClose }
         {/* Footer */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
           <div className="text-[11px] text-slate-500">
-            Autorizado em {invoice.authorizedAt || invoice.issuedAt} • Prefeitura Municipal de Anitápolis/SC
+            {invoice.authorizedAt
+              ? `Autorizada em ${invoice.authorizedAt}`
+              : `Emitida/Criada em ${invoice.issuedAt}`}{' '}
+            • Sefin Nacional — Anitápolis/SC (IBGE 4201109)
           </div>
           <button
             onClick={onClose}

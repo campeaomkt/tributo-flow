@@ -131,14 +131,21 @@ export interface FiscalInvoice {
   pdfUrl?: string;
   municipalAuthUrl?: string;
   emailSent: boolean;
-  // Direct Municipal Transmission Data
+  // Direct Municipal / Sefin Nacional Transmission Data
   transmissionMode?: 'DIRETO_PREFEITURA' | 'MANUAL';
   municipalProvider?: MunicipalProvider;
+  environment?: FiscalEnvironment;
   municipalProtocol?: string;
   officialInvoiceNumber?: string;
   municipalAuthCode?: string;
   municipalUrl?: string;
   authorizedAt?: string;
+  dpsId?: string;
+  chaveAcessoNacional?: string;
+  nfseXmlNacional?: string;
+  sefinEndpointUrl?: string;
+  sefinErrors?: Array<{ codigo: string; descricao: string; complemento?: string }>;
+  lastTransmissionError?: string;
   soapRequestXml?: string;
   soapResponseXml?: string;
   signedXml?: string;
@@ -148,7 +155,7 @@ export interface CompanySettings {
   corporateName: string; // "CAMPEAO NEGOCIOS DIGITAIS LTDA"
   tradeName: string; // "CAMPEAO NEGOCIOS DIGITIAS"
   cnpj: string; // "40.731.222/0001-07"
-  municipalRegistration: string;
+  municipalRegistration: string; // "1618"
   stateRegistration?: string; // "264108787"
   crt: string; // "Simples Nacional"
   specialRegime: string; // "Microempresário e Empresa de Pequeno Porte (ME EPP)"
@@ -165,7 +172,7 @@ export interface CompanySettings {
   rbt12: number; // Receita Bruta Total 12 meses
   payroll12: number; // Folha de pagamento 12 meses
   defaultIssRate: number; // e.g. 2.9%
-  serviceCode: string; // "01.07"
+  serviceCode: string; // "010701" (cTribNac 6 dígitos)
   cnaePrincipal: string; // "6202-3/00"
   address: {
     street: string;
@@ -182,6 +189,9 @@ export interface CompanySettings {
   certificateStatus: 'ACTIVE' | 'EXPIRED' | 'MISSING';
   certificateExpiryDate: string;
   certificateFileName?: string;
+  certificateSubject?: string;
+  certificateIssuer?: string;
+  certificateCnpj?: string;
   certificatePassword?: string;
 }
 

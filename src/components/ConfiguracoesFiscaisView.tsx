@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useFiscal } from '../context/FiscalContext';
 import { TaxRegime, MunicipalProvider, FiscalEnvironment } from '../types';
-import { 
-  Building2, 
-  ShieldCheck, 
-  Calculator, 
-  Save, 
-  Check, 
+import {
+  Building2,
+  ShieldCheck,
+  Calculator,
+  Save,
+  Check,
   HelpCircle,
   FileBadge,
   Sparkles,
@@ -19,11 +19,21 @@ import {
   Lock,
   KeyRound,
   Zap,
-  Server
+  Server,
+  Loader2
 } from 'lucide-react';
+import { validatePfxCertificate } from '../services/directTransmitter';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
-  const { company, updateCompany, setIsCompanyModalOpen } = useFiscal();
+  const {
+    company,
+    updateCompany,
+    setIsCompanyModalOpen,
+    hasLoadedCert,
+    certSource,
+    setInMemoryCertificate,
+    clearInMemoryCertificate,
+  } = useFiscal();
 
   const [taxRegime, setTaxRegime] = useState<TaxRegime>(company.taxRegime);
   const [simplesAnexo, setSimplesAnexo] = useState(company.simplesAnexo);
@@ -31,21 +41,23 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [rbt12, setRbt12] = useState(company.rbt12.toString());
   const [payroll12, setPayroll12] = useState(company.payroll12.toString());
   const [defaultIssRate, setDefaultIssRate] = useState(company.defaultIssRate.toString());
-  const [serviceCode, setServiceCode] = useState(company.serviceCode);
+  const [serviceCode, setServiceCode] = useState(company.serviceCode || '010701');
   const [cnaePrincipal, setCnaePrincipal] = useState(company.cnaePrincipal);
   const [corporateName, setCorporateName] = useState(company.corporateName);
   const [cnpj, setCnpj] = useState(company.cnpj);
-  const [municipalRegistration, setMunicipalRegistration] = useState(company.municipalRegistration);
+  const [municipalRegistration, setMunicipalRegistration] = useState(company.municipalRegistration || '1618');
   const [accountantName, setAccountantName] = useState(company.accountantName);
   const [accountantEmail, setAccountantEmail] = useState(company.accountantEmail);
-  const [municipalProvider, setMunicipalProvider] = useState<MunicipalProvider>(company.municipalProvider || 'BETHA');
-  const [fiscalEnvironment, setFiscalEnvironment] = useState<FiscalEnvironment>(company.fiscalEnvironment || 'PRODUCAO');
+  const [municipalProvider, setMunicipalProvider] = useState<MunicipalProvider>(company.municipalProvider || 'PADRAO_NACIONAL');
+  const [fiscalEnvironment, setFiscalEnvironment] = useState<FiscalEnvironment>(company.fiscalEnvironment || 'HOMOLOGACAO');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const [certPassword, setCertPassword] = useState(company.certificatePassword || '');
+  const [certPassword, setCertPassword] = useState('');
   const [certFileName, setCertFileName] = useState(company.certificateFileName || '');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFileBase64, setSelectedFileBase64] = useState<string>('');
+  const [isValidatingCert, setIsValidatingCert] = useState(false);
   const [showCertPassword, setShowCertPassword] = useState(false);
   const [certFeedback, setCertFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -60,21 +72,34 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
     if (file) {
       setSelectedFile(file);
       setCertFileName(file.name);
-      setCertFeedback({
-        type: 'success',
-        message: `Arquivo "${file.name}" selecionado! Agora digite a senha do certificado para autenticar a chave privada.`,
-      });
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const b64 = result.includes(',') ? result.split(',').pop() || '' : result;
+        setSelectedFileBase64(b64);
+        setCertFeedback({
+          type: 'success',
+          message: `Arquivo "${file.name}" lido! Agora digite a senha do certificado e clique em "Instalar & Validar" para autenticar a chave privada.`,
+        });
+      };
+      reader.onerror = () => {
+        setCertFeedback({
+          type: 'error',
+          message: 'Não foi possível ler o arquivo selecionado. Tente selecionar o .pfx novamente.',
+        });
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  const handleInstallCertificate = (e: React.FormEvent) => {
+  const handleInstallCertificate = async (e: React.FormEvent) => {
     e.preventDefault();
     const effectiveFileName = selectedFile ? selectedFile.name : certFileName;
 
-    if (!effectiveFileName) {
+    if (!selectedFileBase64) {
       setCertFeedback({
         type: 'error',
-        message: 'Por favor, selecione primeiro o arquivo do certificado digital (.pfx ou .p12).',
+        message: 'Por favor, selecione o arquivo do certificado digital (.pfx ou .p12) do seu computador.',
       });
       return;
     }
@@ -82,42 +107,77 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
     if (!certPassword || certPassword.trim().length === 0) {
       setCertFeedback({
         type: 'error',
-        message: 'A senha do certificado é obrigatória! Sem a senha, a chave privada A1 não pode ser descriptografada para assinar as notas.',
+        message: 'A senha do certificado é obrigatória para descriptografar a chave privada A1.',
       });
       return;
     }
 
-    updateCompany({
-      certificateStatus: 'ACTIVE',
-      certificateFileName: effectiveFileName,
-      certificatePassword: certPassword,
-      certificateExpiryDate: '2027-11-30',
-    });
+    setIsValidatingCert(true);
+    setCertFeedback(null);
+    try {
+      const validation = await validatePfxCertificate(selectedFileBase64, certPassword);
+      if (!validation.success) {
+        setCertFeedback({
+          type: 'error',
+          message: validation.error || 'Falha ao validar certificado .pfx ou senha incorreta.',
+        });
+        return;
+      }
 
-    setCertFeedback({
-      type: 'success',
-      message: `Certificado "${effectiveFileName}" autenticado e validado com sucesso! Senha configurada para assinatura das NFS-e.`,
-    });
-    setTimeout(() => setCertFeedback(null), 4000);
+      if (validation.isExpired) {
+        setCertFeedback({
+          type: 'error',
+          message: `Este certificado está EXPIRADO desde ${validation.validTo?.slice(0, 10)}. Utilize um Certificado A1 válido.`,
+        });
+        return;
+      }
+
+      // Store binary + password strictly in memory (never in localStorage)
+      setInMemoryCertificate(selectedFileBase64, certPassword);
+
+      updateCompany({
+        certificateStatus: 'ACTIVE',
+        certificateFileName: effectiveFileName,
+        certificateSubject: validation.subjectCN,
+        certificateIssuer: validation.issuerCN,
+        certificateCnpj: validation.cnpj,
+        certificateExpiryDate: validation.validTo ? validation.validTo.slice(0, 10) : '',
+      });
+
+      setCertPassword('');
+      setCertFeedback({
+        type: 'success',
+        message: `Certificado ICP-Brasil validado com sucesso! Titular: ${validation.subjectCN} • Válido até ${validation.validTo?.slice(0, 10)}.`,
+      });
+    } catch (err: any) {
+      setCertFeedback({
+        type: 'error',
+        message: err?.message || 'Erro ao comunicar com o servidor para validar o certificado.',
+      });
+    } finally {
+      setIsValidatingCert(false);
+    }
   };
 
   const handleRemoveCert = () => {
-    if (confirm('Deseja remover o certificado A1? Sem o certificado e a senha, as notas fiscais não poderão ser assinadas na prefeitura.')) {
-      setCertFileName('');
-      setCertPassword('');
-      setSelectedFile(null);
-      updateCompany({
-        certificateStatus: 'MISSING',
-        certificateExpiryDate: '',
-        certificateFileName: '',
-        certificatePassword: '',
-      });
-      setCertFeedback({
-        type: 'error',
-        message: 'Certificado A1 e senha removidos.',
-      });
-      setTimeout(() => setCertFeedback(null), 3000);
-    }
+    setCertFileName('');
+    setCertPassword('');
+    setSelectedFile(null);
+    setSelectedFileBase64('');
+    clearInMemoryCertificate();
+    updateCompany({
+      certificateStatus: 'MISSING',
+      certificateExpiryDate: '',
+      certificateFileName: '',
+      certificateSubject: '',
+      certificateIssuer: '',
+      certificateCnpj: '',
+    });
+    setCertFeedback({
+      type: 'error',
+      message: 'Certificado A1 removido da memória.',
+    });
+    setTimeout(() => setCertFeedback(null), 3500);
   };
 
   const handleSave = () => {
@@ -163,43 +223,39 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         </button>
       </div>
 
-      {/* Clarification Banner: Receita Federal vs Prefeitura vs SEFAZ */}
+      {/* Clarification Banner: Padrão Nacional NFS-e (Sefin Nacional) */}
       <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-purple-900 text-white rounded-2xl p-5 shadow-sm space-y-3">
         <div className="flex items-center gap-2.5">
           <span className="p-2 rounded-xl bg-white/10 text-cyan-300">
             <HelpCircle className="w-5 h-5" />
           </span>
           <div>
-            <h3 className="font-bold text-sm">Preciso integrar com a Receita Federal para emitir notas fiscais?</h3>
-            <p className="text-xs text-blue-200">Entenda onde cada tipo de nota fiscal é transmitida na prática:</p>
+            <h3 className="font-bold text-sm">Emissão Oficial pelo Padrão Nacional da NFS-e (Sefin Nacional)</h3>
+            <p className="text-xs text-blue-200">Obrigatório para ME e EPP do Simples Nacional desde 01/11/2026 (Resolução CGSN nº 191/2026):</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-xs">
           <div className="p-3.5 rounded-xl bg-white/10 border border-white/10 space-y-1">
-            <p className="font-bold text-cyan-300">1. NFS-e (Infoprodutos / Cursos / TI)</p>
+            <p className="font-bold text-cyan-300">1. Envio Direto via API REST mTLS</p>
             <p className="text-blue-100 text-[11px] leading-relaxed">
-              <strong>NÃO vai para a Receita Federal diretamente.</strong> É transmitida para a <strong>Prefeitura Municipal</strong> do seu CNPJ (ex: São Paulo, Curitiba) via padrão ABRASF ou Portal Nacional NFS-e (se MEI).
+              O TributoFlow gera o XML da <strong>DPS</strong>, assina com <strong>XMLDSig RSA-SHA256</strong> usando seu Certificado A1, compacta em GZip+Base64 e envia direto à <strong>Sefin Nacional</strong>.
             </p>
           </div>
 
           <div className="p-3.5 rounded-xl bg-white/10 border border-white/10 space-y-1">
-            <p className="font-bold text-pink-300">2. NF-e (Produtos Físicos)</p>
+            <p className="font-bold text-pink-300">2. Produção Restrita (Testes Reais)</p>
             <p className="text-blue-100 text-[11px] leading-relaxed">
-              É transmitida para a <strong>SEFAZ Estadual</strong> (Secretaria da Fazenda do seu Estado), autorizada pelo servidor da SEFAZ com seu Certificado A1.
+              Teste tudo no servidor oficial de homologação (<code>sefin.producaorestrita.nfse.gov.br</code>) sem gerar imposto ou valor fiscal antes de virar para Produção.
             </p>
           </div>
 
           <div className="p-3.5 rounded-xl bg-white/10 border border-white/10 space-y-1">
-            <p className="font-bold text-emerald-300">3. E a Receita Federal?</p>
+            <p className="font-bold text-emerald-300">3. Anitápolis/SC + Receita Federal</p>
             <p className="text-blue-100 text-[11px] leading-relaxed">
-              A Receita Federal recebe os dados no <strong>final do mês</strong>, quando seu contador importa os XMLs do TributoFlow e apura o <strong>Simples Nacional (PGDAS-D)</strong> para gerar sua guia DAS.
+              Município IBGE <strong>4201109</strong> • Inscrição Municipal <strong>{company.municipalRegistration || '1618'}</strong>. As notas autorizadas aparecem automaticamente no <strong>nfse.gov.br</strong>.
             </p>
           </div>
-        </div>
-
-        <div className="pt-1 text-[11px] text-blue-200 border-t border-white/10 flex items-center justify-between">
-          <span>O TributoFlow cuida de toda a assinatura e envio com a prefeitura automaticamente usando seu <strong>Certificado Digital A1</strong>.</span>
         </div>
       </div>
 
@@ -238,7 +294,9 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
             <p className="text-slate-600 text-[11px] truncate" title={company.specialRegime}>
               {company.specialRegime || 'Microempresário e Empresa de Pequeno Porte (ME EPP)'}
             </p>
-            <p className="text-slate-500 text-[11px]">Insc. Estadual: {company.stateRegistration || '264108787'}</p>
+            <p className="text-slate-500 text-[11px]">
+              IE: {company.stateRegistration || '264108787'} • IM: <strong>{company.municipalRegistration || '1618'}</strong>
+            </p>
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1">
@@ -432,17 +490,17 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
           <div>
             <label className="block font-semibold text-slate-700 mb-1">
-              Código de Tributação Municipal (Item LC 116/03)
+              Código de Tributação Nacional (cTribNac - 6 dígitos)
             </label>
             <input
               type="text"
               value={serviceCode}
               onChange={e => setServiceCode(e.target.value)}
               className="w-full px-3.5 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
-              placeholder="Ex: 01.07"
+              placeholder="Ex: 010701"
             />
             <span className="text-[10px] text-slate-400 mt-1 block">
-              01.07 = Suporte técnico, consultoria em TI e serviços de internet
+              010701 = Item 01.07 (Suporte técnico, informática e conteúdo digital)
             </span>
           </div>
 
@@ -464,23 +522,23 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
 
           <div>
             <label className="block font-semibold text-slate-700 mb-1">
-              Alíquota de ISS da sua Prefeitura (%)
+              Alíquota de ISS de Referência (%)
             </label>
             <input
               type="text"
               value={defaultIssRate}
               onChange={e => setDefaultIssRate(e.target.value)}
               className="w-full px-3.5 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
-              placeholder="Ex: 2.9"
+              placeholder="Ex: 2.0"
             />
             <span className="text-[10px] text-slate-400 mt-1 block">
-              Anitápolis/SC geralmente aplica 2,0% a 2,5% pelo Simples Nacional
+              Anitápolis/SC (IBGE 4201109) • Simples Nacional recolhe via DAS
             </span>
           </div>
         </div>
       </div>
 
-      {/* Motor de Transmissão Direta com a Prefeitura (Sem Intermediários) */}
+      {/* Motor de Transmissão Direta Sefin Nacional (Sem Intermediários) */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -489,13 +547,13 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-bold text-slate-800 text-base">Motor de Transmissão Municipal Direta</h2>
+                <h2 className="font-bold text-slate-800 text-base">API Oficial Sefin Nacional (Padrão Nacional NFS-e)</h2>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
-                  Sem Intermediários
+                  Conexão Direta mTLS
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Transmissão direta do RPS assinado via WebService SOAP com a prefeitura, sem mensalidades de terceiros (Focus NFe, PlugNotas, etc.)
+                Transmissão real de DPS assinada (XMLDSig RSA-SHA256 + GZip/Base64) direto aos servidores do Emissor Nacional, sem intermediários pagos
               </p>
             </div>
           </div>
@@ -504,36 +562,40 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
           <div>
             <label className="block font-semibold text-slate-700 mb-1">
-              Provedor do WebService Municipal
+              Padrão de Transmissão Ativo
             </label>
             <select
               value={municipalProvider}
               onChange={e => setMunicipalProvider(e.target.value as MunicipalProvider)}
               className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
             >
-              <option value="BETHA">Betha Sistemas (ABRASF v2.02 - Anitápolis/SC e 80+ municípios)</option>
-              <option value="IPM">IPM Sistemas (Atende.net / Santa Catarina)</option>
-              <option value="PADRAO_NACIONAL">Portal Nacional NFS-e (Receita Federal / DPS Nacional)</option>
+              <option value="PADRAO_NACIONAL">API Oficial Sefin Nacional (Padrão Nacional NFS-e — Obrigatório SN)</option>
             </select>
             <span className="text-[10px] text-slate-400 mt-1 block">
-              Anitápolis - SC utiliza o WebService Betha Sistemas com layout ABRASF v2.02
+              Anitápolis/SC (IBGE 4201109) • Inscrição Municipal: <strong>{municipalRegistration || '1618'}</strong>
             </span>
           </div>
 
           <div>
             <label className="block font-semibold text-slate-700 mb-1">
-              Ambiente de Emissão
+              Ambiente Sefin Nacional
             </label>
             <select
               value={fiscalEnvironment}
               onChange={e => setFiscalEnvironment(e.target.value as FiscalEnvironment)}
-              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
+              className={`w-full px-3.5 py-2.5 rounded-lg border font-semibold focus:outline-none focus:ring-2 focus:ring-purple-600 ${
+                fiscalEnvironment === 'HOMOLOGACAO'
+                  ? 'border-amber-400 bg-amber-50 text-amber-950'
+                  : 'border-emerald-400 bg-emerald-50 text-emerald-950'
+              }`}
             >
-              <option value="PRODUCAO">Produção (Ambiente Oficial da Prefeitura - Gera NFS-e Válida)</option>
-              <option value="HOMOLOGACAO">Homologação (Ambiente de Testes sem Valor Fiscal)</option>
+              <option value="HOMOLOGACAO">Homologação — Produção Restrita (Testes reais sem valor fiscal)</option>
+              <option value="PRODUCAO">Produção Oficial (Emite NFS-e válida no nfse.gov.br)</option>
             </select>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              Em produção, cada nota autorizada gera o número oficial e código de autenticidade da prefeitura
+            <span className="text-[10px] text-slate-500 mt-1 block">
+              {fiscalEnvironment === 'HOMOLOGACAO'
+                ? 'Modo seguro ativo: valida certificado, XML e regras na Receita sem gerar imposto.'
+                : 'Atenção: em Produção, cada nota autorizada tem validade fiscal imediata.'}
             </span>
           </div>
         </div>
@@ -541,21 +603,23 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         {/* Technical specs of autonomous engine */}
         <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
           <div className="space-y-0.5">
-            <span className="text-[10px] text-slate-400 uppercase font-bold">Endpoint SOAP WSDL</span>
-            <p className="font-mono text-[11px] font-semibold text-purple-900 truncate" title="https://e-gov.betha.com.br/e-nota-contribuinte-ws/consultarLoteRps?wsdl">
-              e-gov.betha.com.br/e-nota-contribuinte-ws
+            <span className="text-[10px] text-slate-400 uppercase font-bold">Endpoint REST (POST /nfse)</span>
+            <p className="font-mono text-[11px] font-semibold text-purple-900 truncate">
+              {fiscalEnvironment === 'PRODUCAO'
+                ? 'sefin.nfse.gov.br/SefinNacional/nfse'
+                : 'sefin.producaorestrita.nfse.gov.br/SefinNacional/nfse'}
             </p>
           </div>
           <div className="space-y-0.5">
-            <span className="text-[10px] text-slate-400 uppercase font-bold">Assinatura Digital</span>
+            <span className="text-[10px] text-slate-400 uppercase font-bold">Assinatura & Transporte</span>
             <p className="font-semibold text-slate-800">
-              XMLDSig RSA-SHA1 (Digest C14N)
+              XMLDSig RSA-SHA256 + GZip/B64 + mTLS
             </p>
           </div>
           <div className="space-y-0.5">
             <span className="text-[10px] text-slate-400 uppercase font-bold">Custo de Transmissão</span>
             <p className="font-bold text-emerald-700">
-              R$ 0,00 (100% Autônomo)
+              R$ 0,00 (Direto no Governo)
             </p>
           </div>
         </div>
@@ -615,7 +679,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
           </div>
         )}
 
-        {company.certificateStatus === 'ACTIVE' ? (
+        {hasLoadedCert && company.certificateStatus === 'ACTIVE' ? (
           <div className="p-5 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-4 text-xs">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -623,49 +687,46 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                   <ShieldCheck className="w-6 h-6" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <p className="font-bold text-slate-900 text-sm">Certificado Digital e-CNPJ A1 Ativo</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-bold text-slate-900 text-sm">Certificado Digital e-CNPJ A1 Validado</p>
                     <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
-                      Chave Privada Pronta
+                      {certSource === 'server_env' ? 'Configurado no Servidor (.env)' : 'Ativo na Sessão Segura (Memória)'}
                     </span>
                   </div>
+                  <p className="text-slate-700 font-medium mt-0.5">
+                    {company.certificateSubject || company.corporateName}
+                  </p>
                   <p className="text-slate-600 mt-0.5">
                     Arquivo: <strong className="font-mono text-slate-800">{company.certificateFileName || certFileName || 'certificado.pfx'}</strong>
-                    {' '}• Validade até {company.certificateExpiryDate || '30/11/2027'}
+                    {company.certificateExpiryDate ? ` • Validade até ${company.certificateExpiryDate}` : ''}
+                    {company.certificateIssuer ? ` • Emissor: ${company.certificateIssuer}` : ''}
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleRemoveCert}
-                  className="px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-1.5 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Substituir / Remover</span>
-                </button>
-              </div>
+              {certSource === 'memory' && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRemoveCert}
+                    className="px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Trocar / Remover</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="p-3 bg-white rounded-lg border border-emerald-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px]">
               <div className="flex items-center gap-2 text-slate-600">
-                <Lock className="w-4 h-4 text-emerald-600" />
-                <span>Senha do Certificado:</span>
-                <span className="font-mono font-bold text-slate-800">
-                  {showCertPassword ? (company.certificatePassword || certPassword || '••••••••') : '••••••••••••'}
+                <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  Chave privada e senha protegidas <strong>apenas em memória segura</strong> (nunca gravadas no navegador/localStorage).
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setShowCertPassword(!showCertPassword)}
-                  className="text-slate-400 hover:text-slate-600 ml-1"
-                  title={showCertPassword ? 'Ocultar' : 'Exibir'}
-                >
-                  {showCertPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
               </div>
-              <span className="text-emerald-700 font-medium">
-                ✓ Pronto para assinar e autorizar NFS-e na prefeitura
+              <span className="text-emerald-700 font-semibold shrink-0">
+                ✓ Pronto para mTLS na Sefin Nacional
               </span>
             </div>
           </div>
@@ -676,9 +737,9 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <p className="font-bold text-slate-900 text-sm">Instalação do Certificado Digital A1</p>
+                <p className="font-bold text-slate-900 text-sm">Carregar Certificado Digital A1 (.pfx / .p12)</p>
                 <p className="text-slate-600 leading-relaxed mt-0.5">
-                  Para emitir e assinar notas fiscais com validade jurídica, selecione o arquivo <strong>.pfx ou .p12</strong> do seu e-CNPJ e digite a <strong>senha do certificado</strong>.
+                  Selecione o arquivo <strong>.pfx ou .p12</strong> do seu e-CNPJ e informe a <strong>senha</strong>. O servidor valida a assinatura ICP-Brasil e a data de validade na hora. Por segurança, o arquivo e a senha ficam apenas em memória na sessão (ou configurados via variáveis <code>NFSE_PFX_BASE64</code> / <code>NFSE_CERT_PASSWORD</code> no servidor).
                 </p>
               </div>
             </div>
@@ -691,7 +752,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                 </label>
                 <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-purple-400 bg-white hover:bg-purple-50/50 cursor-pointer text-purple-800 font-semibold transition-colors">
                   <Upload className="w-4 h-4 text-purple-600" />
-                  <span>{certFileName ? `Trocar: ${certFileName}` : 'Selecionar arquivo .pfx / .p12'}</span>
+                  <span>{selectedFile ? `Trocar: ${selectedFile.name}` : 'Selecionar arquivo .pfx / .p12'}</span>
                   <input
                     type="file"
                     accept=".pfx,.p12"
@@ -699,9 +760,9 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                     className="hidden"
                   />
                 </label>
-                {certFileName && (
+                {selectedFile && (
                   <p className="text-[11px] text-emerald-700 font-semibold mt-1.5 flex items-center gap-1">
-                    <Check className="w-3.5 h-3.5" /> Arquivo carregado: {certFileName}
+                    <Check className="w-3.5 h-3.5" /> Arquivo pronto: {selectedFile.name}
                   </p>
                 )}
               </div>
@@ -729,7 +790,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  A senha é necessária para descriptografar a chave privada na assinatura das notas.
+                  Validada criptograficamente com a chave privada do .pfx.
                 </p>
               </div>
             </div>
@@ -738,10 +799,15 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
             <div className="pt-2 flex items-center justify-end">
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-[#2c0853] hover:bg-[#3d0b72] text-white font-bold text-xs shadow-md shadow-purple-950/20 transition-all flex items-center gap-2"
+                disabled={isValidatingCert}
+                className="px-5 py-2.5 rounded-xl bg-[#2c0853] hover:bg-[#3d0b72] text-white font-bold text-xs shadow-md shadow-purple-950/20 transition-all flex items-center gap-2 disabled:opacity-60"
               >
-                <KeyRound className="w-4 h-4 text-amber-300" />
-                <span>Instalar & Validar Certificado A1</span>
+                {isValidatingCert ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-300" />
+                ) : (
+                  <KeyRound className="w-4 h-4 text-amber-300" />
+                )}
+                <span>{isValidatingCert ? 'Validando Certificado A1...' : 'Validar & Ativar Certificado A1'}</span>
               </button>
             </div>
           </form>
