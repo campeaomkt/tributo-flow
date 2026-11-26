@@ -773,7 +773,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                     Diagnóstico mTLS na Sefin Nacional (Somente Leitura — Sem Emitir Nota)
                   </p>
                   <span className="text-[10px] font-mono text-slate-500">
-                    GET /parametros_municipais/4201109/convenio
+                    Sefin /nfse + ADN /parametrizacao/4201109/convenio
                   </span>
                 </div>
 

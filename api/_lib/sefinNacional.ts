@@ -822,7 +822,6 @@ export async function transmitDpsToSefin(
 
   // 5. Transmit via mTLS POST to Sefin Nacional (with zero-body GET pre-auth for IIS TLS 1.2 renegotiation)
   const payload = JSON.stringify({ dpsXmlGZipB64 });
-  const ibgeForPreAuth = getIbgeCityCode(input.company.address?.city, input.company.address?.state);
   const response = await mtlsRequest({
     hostname: hostCfg.sefin,
     path: endpointPath,
@@ -834,7 +833,7 @@ export async function transmitDpsToSefin(
     rawPfxBuffer: parsedCert.rawPfxBuffer,
     passphrase: parsedCert.passphrase,
     body: payload,
-    preAuthPath: `/SefinNacional/parametros_municipais/${ibgeForPreAuth}/convenio`,
+    preAuthPath: '/SefinNacional/nfse/00000000000000000000000000000000000000000000000000',
   });
 
   const rawResponse = response.bodyBuffer.toString('utf8');
@@ -889,12 +888,15 @@ export async function transmitDpsToSefin(
   }
 
   if (isIisHtml403(response.statusCode, response.bodyBuffer)) {
+    const isSyngular = /syngular/i.test(parsedCert.issuerCN);
     const diagDesc =
       `O servidor IIS da Sefin Nacional (${hostCfg.sefin}) recusou a autenticação do Certificado Digital A1 com HTTP 403 Forbidden. ` +
       `Tentativas mTLS: [${response.strategyLogs.join(' | ')}]. ` +
-      `Certificados no .pfx (${parsedCert.allCertSubjects.length}): ${parsedCert.allCertSubjects.join(' ; ')}. ` +
+      `Emissor: "${parsedCert.issuerCN}". ` +
       (env === 'HOMOLOGACAO'
-        ? 'Use o botão "Testar Conexão mTLS (Homologação + Produção)" em Regimes Tributários para verificar sem emitir nota se o servidor de Produção já aceita este certificado.'
+        ? isSyngular
+          ? 'Incompatibilidade conhecida no servidor IIS de Produção Restrita (Homologação) do SERPRO com certificados da AC SyngularID (o mesmo certificado funciona normalmente em Produção). Para testar em Homologação é necessário um certificado de outra AC, ou emitir diretamente em Produção.'
+          : 'O servidor de Produção Restrita (Homologação) do SERPRO recusou o certificado. Use "Testar Conexão mTLS" em Regimes Tributários para confirmar se Produção já aceita este certificado.'
         : 'Verifique se o certificado e-CNPJ A1 está ativo, não revogado e com cadeia ICP-Brasil válida.');
 
     return {
@@ -1175,12 +1177,12 @@ export async function testSefinConnection(params: {
 
   const probeEnv = async (env: SefinEnvironment): Promise<SefinEnvProbeResult> => {
     const hostCfg = SEFIN_HOSTS[env];
-    const path = `/SefinNacional/parametros_municipais/${cleanIbge}/convenio`;
-    const endpointUrl = `https://${hostCfg.sefin}${path}`;
+    const sefinProbePath = '/SefinNacional/nfse/00000000000000000000000000000000000000000000000000';
+    const endpointUrl = `https://${hostCfg.sefin}${sefinProbePath}`;
     try {
       const res = await mtlsRequest({
         hostname: hostCfg.sefin,
-        path,
+        path: sefinProbePath,
         method: 'GET',
         certPem: parsedCert.certPem,
         privateKeyPem: parsedCert.privateKeyPem,
@@ -1191,15 +1193,45 @@ export async function testSefinConnection(params: {
       });
       const text = res.bodyBuffer.toString('utf8');
       const isHtml403 = isIisHtml403(res.statusCode, res.bodyBuffer);
+      const authenticated = !isHtml403 && res.statusCode > 0 && res.statusCode !== 401 && res.statusCode !== 403;
+
+      let preview = isHtml403
+        ? 'HTTP 403 IIS (Certificado recusado no mTLS pelo servidor de Homologação/SERPRO)'
+        : text.slice(0, 400);
+
+      // If Sefin mTLS succeeded, also query the real ADN Parametrização convenio endpoint for IBGE
+      if (authenticated) {
+        try {
+          const adnRes = await mtlsRequest({
+            hostname: hostCfg.adn,
+            path: `/parametrizacao/${cleanIbge}/convenio`,
+            method: 'GET',
+            certPem: parsedCert.certPem,
+            privateKeyPem: parsedCert.privateKeyPem,
+            caCertsPem: parsedCert.caCertsPem,
+            rootCertsPem: parsedCert.rootCertsPem,
+            rawPfxBuffer: parsedCert.rawPfxBuffer,
+            passphrase: parsedCert.passphrase,
+          });
+          if (adnRes.statusCode >= 200 && adnRes.statusCode < 300) {
+            preview = `Sefin mTLS OK (HTTP ${res.statusCode}) • Convênio IBGE ${cleanIbge} (ADN HTTP ${adnRes.statusCode}): ${adnRes.bodyBuffer.toString('utf8').slice(0, 300)}`;
+          } else {
+            preview = `Sefin mTLS OK (HTTP ${res.statusCode}): ${text.slice(0, 300)}`;
+          }
+        } catch {
+          preview = `Sefin mTLS OK (HTTP ${res.statusCode}): ${text.slice(0, 300)}`;
+        }
+      }
+
       return {
         environment: env,
         hostname: hostCfg.sefin,
         endpointUrl,
-        authenticated: !isHtml403 && res.statusCode > 0 && res.statusCode !== 401 && res.statusCode !== 403,
+        authenticated,
         httpStatus: res.statusCode,
         tlsModeUsed: res.tlsModeUsed,
         strategyLogs: res.strategyLogs,
-        responsePreview: isHtml403 ? 'HTTP 403 IIS (Certificado recusado no mTLS)' : text.slice(0, 400),
+        responsePreview: preview,
       };
     } catch (err: any) {
       return {
