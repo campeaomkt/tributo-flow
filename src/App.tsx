@@ -101,10 +101,75 @@ const MainLayout: React.FC = () => {
   );
 };
 
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+}
+
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error?.message || 'Erro inesperado na interface.',
+    };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center p-6 font-sans text-slate-800">
+          <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200 shadow-lg p-6 space-y-4">
+            <h1 className="text-lg font-bold text-slate-900">Ops! Ocorreu um erro inesperado</h1>
+            <p className="text-sm text-slate-600">
+              O aplicativo encontrou uma falha ao renderizar os dados locais. Suas credenciais salvas no cofre permanecem protegidas.
+            </p>
+            <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-xs font-mono text-rose-700 break-words">
+              {this.state.errorMessage}
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={() => window.location.reload()}
+                className="flex-1 bg-[#2c0853] hover:bg-[#3d0e70] text-white text-sm font-semibold py-2.5 px-4 rounded-xl transition-colors"
+              >
+                Recarregar aplicativo
+              </button>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.removeItem('tributoflow_sales_v8');
+                    localStorage.removeItem('tributoflow_invoices_v8');
+                    localStorage.removeItem('tributoflow_sales_v7');
+                    localStorage.removeItem('tributoflow_invoices_v7');
+                  } catch {
+                    // ignore
+                  }
+                  window.location.reload();
+                }}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium transition-colors"
+              >
+                Limpar cache antigo
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <FiscalProvider>
-      <MainLayout />
-    </FiscalProvider>
+    <AppErrorBoundary>
+      <FiscalProvider>
+        <MainLayout />
+      </FiscalProvider>
+    </AppErrorBoundary>
   );
 }

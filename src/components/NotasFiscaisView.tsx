@@ -39,6 +39,8 @@ export const NotasFiscaisView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | InvoiceStatus>('ALL');
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [cancelModalInvoice, setCancelModalInvoice] = useState<FiscalInvoice | null>(null);
   const [cancelReason, setCancelReason] = useState('Cancelamento solicitado pelo cliente');
@@ -68,6 +70,10 @@ export const NotasFiscaisView: React.FC = () => {
 
     return matchesSearch && matchesStatus && matchesPlatform;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedInvoices = filteredInvoices.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const toggleSelectAll = () => {
     if (selectedIds.length === filteredInvoices.length) {
@@ -491,7 +497,7 @@ export const NotasFiscaisView: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredInvoices.map(inv => {
+                paginatedInvoices.map(inv => {
                   const isSelected = selectedIds.includes(inv.id);
 
                   return (
@@ -680,6 +686,37 @@ export const NotasFiscaisView: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {filteredInvoices.length > PAGE_SIZE && (
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+            <span>
+              Mostrando <strong>{(safePage - 1) * PAGE_SIZE + 1}</strong>–
+              <strong>{Math.min(safePage * PAGE_SIZE, filteredInvoices.length)}</strong> de{' '}
+              <strong>{filteredInvoices.length}</strong> notas fiscais
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="px-3 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100 font-semibold disabled:opacity-40"
+              >
+                Anterior
+              </button>
+              <span className="font-mono font-bold text-slate-800">
+                Página {safePage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                className="px-3 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100 font-semibold disabled:opacity-40"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Cancel Modal */}

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { 
   CompanySettings, 
   PlatformConfig, 
@@ -29,7 +29,14 @@ import {
   ServerCertStatus,
   SefinConnectionTestResult,
 } from '../services/directTransmitter';
-import { saveVaultItem, loadVaultItem, deleteVaultItem } from '../services/localVault';
+import {
+  saveVaultItem,
+  loadVaultItem,
+  deleteVaultItem,
+  saveAppData,
+  loadAppData,
+  deleteAppData,
+} from '../services/localVault';
 
 interface DateFilter {
   start: string;
@@ -222,31 +229,18 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return initialPlatforms;
   });
 
-  const [sales, setSales] = useState<Sale[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.SALES);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    const { sales } = generateInitialInvoices();
-    return sales;
-  });
+  const hasHydratedIdbRef = useRef<boolean>(false);
 
-  const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.INVOICES);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    const { invoices } = generateInitialInvoices();
-    return invoices;
-  });
+  const [sales, setSales] = useState<Sale[]>(() => generateInitialInvoices().sales);
+  const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => generateInitialInvoices().invoices);
 
   const [monthlyClosings, setMonthlyClosings] = useState<MonthlyClosing[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CLOSINGS);
-    return saved ? JSON.parse(saved) : initialMonthlyClosings;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CLOSINGS);
+      return saved ? JSON.parse(saved) : initialMonthlyClosings;
+    } catch {
+      return initialMonthlyClosings;
+    }
   });
 
   const [currentView, setCurrentView] = useState<string>('dashboard');
@@ -262,11 +256,36 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState<boolean>(false);
 
-  // Hydrate encrypted local vault (A1 certificate + Kiwify Client Secret) and check server env on startup
+  // Hydrate encrypted local vault + large sales/invoices from IndexedDB (never overflows 5MB localStorage)
   useEffect(() => {
     let cancelled = false;
 
     const hydrateAll = async () => {
+      // 0. Free bloated legacy localStorage keys that could hit Chrome's 5MB quota
+      try {
+        localStorage.removeItem(STORAGE_KEYS.SALES);
+        localStorage.removeItem(STORAGE_KEYS.INVOICES);
+        localStorage.removeItem('tributoflow_sales_v7');
+        localStorage.removeItem('tributoflow_invoices_v7');
+      } catch {
+        // ignore
+      }
+
+      // 0.5 Restore persisted sales & invoices from IndexedDB (supports tens of thousands of records)
+      const [idbSales, idbInvoices] = await Promise.all([
+        loadAppData<Sale[]>(STORAGE_KEYS.SALES),
+        loadAppData<FiscalInvoice[]>(STORAGE_KEYS.INVOICES),
+      ]);
+      if (!cancelled) {
+        if (Array.isArray(idbSales) && idbSales.length > 0) {
+          setSales(idbSales);
+        }
+        if (Array.isArray(idbInvoices) && idbInvoices.length > 0) {
+          setInvoices(idbInvoices);
+        }
+        hasHydratedIdbRef.current = true;
+      }
+
       // 1. Restore A1 certificate from encrypted IndexedDB vault if saved previously
       const savedCertRaw = await loadVaultItem('a1_cert');
       if (!cancelled && savedCertRaw) {
@@ -374,27 +393,42 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, []);
 
-  // Sync to localStorage (explicitly strip secrets so they are never written to browser storage)
+  // Sync lightweight config to localStorage (safely wrapped so QuotaExceededError can never crash React)
   useEffect(() => {
-    const { certificatePassword: _omit, ...safeCompany } = company;
-    localStorage.setItem(STORAGE_KEYS.COMPANY, JSON.stringify(safeCompany));
+    try {
+      const { certificatePassword: _omit, ...safeCompany } = company;
+      localStorage.setItem(STORAGE_KEYS.COMPANY, JSON.stringify(safeCompany));
+    } catch {
+      // ignore storage quota errors
+    }
   }, [company]);
 
   useEffect(() => {
-    const safePlatforms = platforms.map(({ clientSecret: _omit, ...rest }) => ({ ...rest, clientSecret: '' }));
-    localStorage.setItem(STORAGE_KEYS.PLATFORMS, JSON.stringify(safePlatforms));
+    try {
+      const safePlatforms = platforms.map(({ clientSecret: _omit, ...rest }) => ({ ...rest, clientSecret: '' }));
+      localStorage.setItem(STORAGE_KEYS.PLATFORMS, JSON.stringify(safePlatforms));
+    } catch {
+      // ignore storage quota errors
+    }
   }, [platforms]);
 
+  // Persist large sales & invoices lists in IndexedDB (hundreds of MB capacity, never hits 5MB localStorage limit)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(sales));
+    if (!hasHydratedIdbRef.current && sales.length === 0) return;
+    void saveAppData(STORAGE_KEYS.SALES, sales);
   }, [sales]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
+    if (!hasHydratedIdbRef.current && invoices.length === 0) return;
+    void saveAppData(STORAGE_KEYS.INVOICES, invoices);
   }, [invoices]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CLOSINGS, JSON.stringify(monthlyClosings));
+    try {
+      localStorage.setItem(STORAGE_KEYS.CLOSINGS, JSON.stringify(monthlyClosings));
+    } catch {
+      // ignore storage quota errors
+    }
   }, [monthlyClosings]);
 
   // Poll backend for real webhooks received while running
@@ -1244,11 +1278,17 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const resetToDefault = () => {
-    localStorage.removeItem(STORAGE_KEYS.COMPANY);
-    localStorage.removeItem(STORAGE_KEYS.PLATFORMS);
-    localStorage.removeItem(STORAGE_KEYS.SALES);
-    localStorage.removeItem(STORAGE_KEYS.INVOICES);
-    localStorage.removeItem(STORAGE_KEYS.CLOSINGS);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.COMPANY);
+      localStorage.removeItem(STORAGE_KEYS.PLATFORMS);
+      localStorage.removeItem(STORAGE_KEYS.SALES);
+      localStorage.removeItem(STORAGE_KEYS.INVOICES);
+      localStorage.removeItem(STORAGE_KEYS.CLOSINGS);
+    } catch {
+      // ignore
+    }
+    void deleteAppData(STORAGE_KEYS.SALES);
+    void deleteAppData(STORAGE_KEYS.INVOICES);
     setCompany(initialCompanySettings);
     setPlatforms(initialPlatforms);
     const { sales, invoices } = generateInitialInvoices();

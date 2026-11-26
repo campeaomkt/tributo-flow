@@ -3,9 +3,10 @@
 // to stay saved across browser restarts without writing plaintext secrets to localStorage.
 
 const DB_NAME = 'tributoflow_vault_v1';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_KEYS = 'keys';
 const STORE_SECRETS = 'secrets';
+const STORE_APPDATA = 'appdata';
 const MASTER_KEY_ID = 'aes_gcm_master';
 
 function openVaultDb(): Promise<IDBDatabase> {
@@ -22,6 +23,9 @@ function openVaultDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_SECRETS)) {
         db.createObjectStore(STORE_SECRETS);
+      }
+      if (!db.objectStoreNames.contains(STORE_APPDATA)) {
+        db.createObjectStore(STORE_APPDATA);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -145,3 +149,35 @@ export async function deleteVaultItem(key: string): Promise<void> {
     // Ignore errors
   }
 }
+
+export async function saveAppData<T>(key: string, value: T): Promise<void> {
+  try {
+    const db = await openVaultDb();
+    await idbPut(db, STORE_APPDATA, key, value);
+    db.close();
+  } catch {
+    // Ignore quota/private-mode errors without crashing UI
+  }
+}
+
+export async function loadAppData<T>(key: string): Promise<T | null> {
+  try {
+    const db = await openVaultDb();
+    const val = await idbGet<T>(db, STORE_APPDATA, key);
+    db.close();
+    return val !== undefined ? val : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteAppData(key: string): Promise<void> {
+  try {
+    const db = await openVaultDb();
+    await idbDelete(db, STORE_APPDATA, key);
+    db.close();
+  } catch {
+    // Ignore errors
+  }
+}
+

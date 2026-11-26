@@ -5,10 +5,17 @@ import { Users, Search, Mail, MapPin } from 'lucide-react';
 export const ClientesView: React.FC = () => {
   const { sales } = useFiscal();
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   // Extract unique customers from sales
   const customers = Array.from(
-    new Map(sales.map(s => [s.customer.document, s.customer])).values()
+    new Map(
+      sales.map(s => [
+        s.customer.document || s.customer.email || s.id,
+        s.customer,
+      ])
+    ).values()
   );
 
   const filtered = customers.filter(c =>
@@ -17,13 +24,17 @@ export const ClientesView: React.FC = () => {
     c.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedCustomers = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Tomadores de Serviços (Clientes)</h1>
           <p className="text-xs text-slate-500">
-            Base de dados de clientes cadastrados automaticamente através das compras na Kiwify e Hotmart
+            Base de dados de clientes cadastrados automaticamente através das compras na Kiwify e Hotmart ({customers.length} clientes)
           </p>
         </div>
       </div>
@@ -35,7 +46,10 @@ export const ClientesView: React.FC = () => {
             type="text"
             placeholder="Buscar por nome, CPF/CNPJ ou email..."
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            onChange={e => {
+              setSearchTerm(e.target.value);
+              setCurrentPage(1);
+            }}
             className="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-300 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
           />
         </div>
@@ -53,37 +67,72 @@ export const ClientesView: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filtered.map(c => {
-              const isCnpj = c.document.replace(/\D/g, '').length > 11;
+            {paginatedCustomers.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-10 text-center text-slate-400">
+                  Nenhum cliente encontrado.
+                </td>
+              </tr>
+            ) : (
+              paginatedCustomers.map((c, idx) => {
+                const isCnpj = c.document.replace(/\D/g, '').length > 11;
 
-              return (
-                <tr key={c.document} className="hover:bg-slate-50/70">
-                  <td className="px-4 py-3.5 font-bold text-slate-800">
-                    {c.name}
-                  </td>
-                  <td className="px-4 py-3.5 font-mono text-slate-600 font-medium">
-                    {c.document}
-                  </td>
-                  <td className="px-4 py-3.5 text-slate-600">
-                    {c.email}
-                  </td>
-                  <td className="px-4 py-3.5 text-slate-500">
-                    {c.city ? `${c.city} - ${c.state}` : 'São Paulo - SP'}
-                  </td>
-                  <td className="px-4 py-3.5 text-center">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        isCnpj ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {isCnpj ? 'Pessoa Jurídica' : 'Pessoa Física'}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
+                return (
+                  <tr key={`${c.document || c.email || c.name}-${idx}`} className="hover:bg-slate-50/70">
+                    <td className="px-4 py-3.5 font-bold text-slate-800">
+                      {c.name}
+                    </td>
+                    <td className="px-4 py-3.5 font-mono text-slate-600 font-medium">
+                      {c.document || '—'}
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-600">
+                      {c.email || '—'}
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-500">
+                      {c.city ? `${c.city}${c.state ? ` - ${c.state}` : ''}` : 'Não informado'}
+                    </td>
+                    <td className="px-4 py-3.5 text-center">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          isCnpj ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {isCnpj ? 'Pessoa Jurídica' : 'Pessoa Física'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
+
+        {totalPages > 1 && (
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+            <span>
+              Mostrando {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} de {filtered.length} clientes
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 font-medium"
+              >
+                Anterior
+              </button>
+              <span className="font-semibold text-slate-700">
+                Página {safePage} de {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 font-medium"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

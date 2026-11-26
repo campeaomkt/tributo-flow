@@ -36,6 +36,8 @@ export const VendasView: React.FC = () => {
   } = useFiscal();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'approved' | 'refunded'>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
   const [syncToast, setSyncToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
 
@@ -45,6 +47,7 @@ export const VendasView: React.FC = () => {
     setSyncToast(null);
     const res = await syncKiwifySales();
     if (res.success) {
+      setCurrentPage(1);
       setSyncToast({
         type: 'success',
         message: `Sincronização real com a API da Kiwify concluída! ${res.totalFetched} vendas reais carregadas (${res.addedCount} novas).`,
@@ -68,6 +71,10 @@ export const VendasView: React.FC = () => {
     const matchesStatus = statusFilter === 'ALL' || s.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filteredSales.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedSales = filteredSales.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -244,7 +251,7 @@ export const VendasView: React.FC = () => {
                   </td>
                 </tr>
               )}
-              {filteredSales.map(sale => {
+              {paginatedSales.map(sale => {
                 const linkedInvoice = invoices.find(i => i.id === sale.invoiceId);
 
                 return (
@@ -342,6 +349,37 @@ export const VendasView: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {filteredSales.length > PAGE_SIZE && (
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+            <span>
+              Mostrando <strong>{(safePage - 1) * PAGE_SIZE + 1}</strong>–
+              <strong>{Math.min(safePage * PAGE_SIZE, filteredSales.length)}</strong> de{' '}
+              <strong>{filteredSales.length}</strong> vendas reais
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                className="px-3 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100 font-semibold disabled:opacity-40"
+              >
+                Anterior
+              </button>
+              <span className="font-mono font-bold text-slate-800">
+                Página {safePage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                className="px-3 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100 font-semibold disabled:opacity-40"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Edit Sale & Order Bump Modal */}
