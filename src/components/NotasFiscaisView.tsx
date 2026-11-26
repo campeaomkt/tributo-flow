@@ -431,10 +431,15 @@ export const NotasFiscaisView: React.FC = () => {
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
                     Regra Kiwify: {triggerLabels[activeTrigger]}
                   </span>
+                  {kiwifyPlatform?.cancelOnRefund !== false && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                      Auto-cancelamento em estorno/reembolso/chargeback: ATIVO
+                    </span>
+                  )}
                 </div>
 
                 <p className="text-xs text-slate-600">
-                  Verifica a fila a cada 30s (e puxa novas vendas da Kiwify a cada 5 min), respeitando exatamente o gatilho configurado e ignorando reembolsos.
+                  Verifica a fila a cada 30s (e sincroniza a Kiwify a cada 2 min nos últimos 30 dias), emitindo conforme seu gatilho e enviando cancelamento oficial (e101101) na Sefin se houver reembolso, estorno ou chargeback.
                   {kiwifyPlatform && (
                     <button
                       type="button"
@@ -513,6 +518,14 @@ export const NotasFiscaisView: React.FC = () => {
                   Autorizadas nesta sessão:{' '}
                   <strong className="text-emerald-700">{autoTransmitState.transmittedSessionCount}</strong>
                 </span>
+                {(autoTransmitState.eligibleCancelCount > 0 || autoTransmitState.cancelledSessionCount > 0) && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-amber-700 font-semibold">
+                      Estornos p/ cancelar: {autoTransmitState.eligibleCancelCount} (canceladas: {autoTransmitState.cancelledSessionCount})
+                    </span>
+                  </>
+                )}
                 {autoTransmitState.failedSessionCount > 0 && (
                   <>
                     <span className="text-slate-300">•</span>

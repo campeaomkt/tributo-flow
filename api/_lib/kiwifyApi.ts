@@ -125,10 +125,30 @@ function normalizePaymentMethod(raw?: string): 'PIX' | 'CARTAO_CREDITO' | 'BOLET
 }
 
 function normalizeStatus(raw?: string): RealKiwifySale['status'] {
-  const val = String(raw || '').toLowerCase();
+  const val = String(raw || '').toLowerCase().trim();
   if (val === 'paid' || val === 'approved' || val === 'complete' || val === 'completed') return 'approved';
-  if (val === 'refunded') return 'refunded';
-  if (val === 'chargedback' || val === 'chargeback') return 'chargedback';
+  if (
+    val === 'refunded' ||
+    val === 'refund' ||
+    val === 'partially_refunded' ||
+    val === 'estornado' ||
+    val === 'reversed' ||
+    val.includes('refund') ||
+    val.includes('estorn')
+  ) {
+    return 'refunded';
+  }
+  if (
+    val === 'chargedback' ||
+    val === 'chargeback' ||
+    val === 'charge_back' ||
+    val === 'disputed' ||
+    val === 'dispute' ||
+    val.includes('chargeback') ||
+    val.includes('disput')
+  ) {
+    return 'chargedback';
+  }
   if (val === 'refused' || val === 'canceled' || val === 'cancelled') return 'refused';
   return 'pending';
 }
@@ -342,12 +362,15 @@ export async function fetchRealKiwifySales(params: {
 
       for (const item of items) {
         const normalized = normalizeKiwifySale(item);
-        // Only include paid/approved, refunded, or chargedback sales (skip abandoned/waiting_payment unless requested)
+        const rawLower = normalized.rawStatus.toLowerCase();
+        const isCanceledOrder = rawLower === 'canceled' || rawLower === 'cancelled';
+        // Include paid/approved, refunded, chargedback, and canceled orders (skip declined card attempts unless requested)
         if (
           params.includeUnpaid ||
           normalized.status === 'approved' ||
           normalized.status === 'refunded' ||
-          normalized.status === 'chargedback'
+          normalized.status === 'chargedback' ||
+          isCanceledOrder
         ) {
           byRef.set(normalized.reference, normalized);
         }

@@ -1142,22 +1142,23 @@ export async function cancelNfseOnSefin(params: {
   const parsedCert = parsePfxCertificate(creds.pfxBase64, creds.certPassword);
 
   const cnpjAutor = digitsOnly(params.cnpjAutor).padStart(14, '0').slice(-14);
-  const nPedRegEvento = '001';
-  const eventId = `PRE${cleanChave}101101${nPedRegEvento}`;
+  const nPedRegEventoTag = '1';
+  const eventId = `PRE${cleanChave}101101001`;
   const dhEvento = formatBrasiliaIso(new Date());
   const cMotivo = params.motivoCode || '2';
-  const xMotivo = escapeXml(params.motivoDesc || 'Cancelamento solicitado pelo prestador/cliente').slice(0, 255);
+  const rawMotivo = escapeXml(params.motivoDesc || 'Cancelamento automatico por reembolso ou estorno confirmado na plataforma');
+  const xMotivo = (rawMotivo.length >= 15 ? rawMotivo : `${rawMotivo} - estorno confirmado`).slice(0, 255);
 
   const rawEventXml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<pedRegEvento xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">` +
+    `<pedRegEvento xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01">` +
     `<infPedReg Id="${eventId}">` +
     `<tpAmb>${env === 'PRODUCAO' ? '1' : '2'}</tpAmb>` +
-    `<verAplic>TributoFlow_1.0</verAplic>` +
+    `<verAplic>TributoFlow_1.1</verAplic>` +
     `<dhEvento>${dhEvento}</dhEvento>` +
     `<CNPJAutor>${cnpjAutor}</CNPJAutor>` +
     `<chNFSe>${cleanChave}</chNFSe>` +
-    `<nPedRegEvento>${nPedRegEvento}</nPedRegEvento>` +
+    `<nPedRegEvento>${nPedRegEventoTag}</nPedRegEvento>` +
     `<e101101>` +
     `<xDesc>Cancelamento de NFS-e</xDesc>` +
     `<cMotivo>${cMotivo}</cMotivo>` +
@@ -1185,9 +1186,11 @@ export async function cancelNfseOnSefin(params: {
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rootCertsPem: parsedCert.rootCertsPem,
     rawPfxBuffer: parsedCert.rawPfxBuffer,
     passphrase: parsedCert.passphrase,
     body: JSON.stringify({ pedidoRegistroEventoXmlGZipB64 }),
+    preAuthPath: '/SefinNacional/nfse/00000000000000000000000000000000000000000000000000',
   });
 
   const rawResponse = response.bodyBuffer.toString('utf8');
@@ -1200,7 +1203,12 @@ export async function cancelNfseOnSefin(params: {
 
   const errors = parseSefinErrors(parsedJson);
   const eventoXml = tryGunzipBase64(parsedJson?.eventoXmlGZipB64 || parsedJson?.EventoXmlGZipB64);
-  const ok = response.statusCode >= 200 && response.statusCode < 300 && errors.length === 0;
+  const alreadyCancelled = errors.some(e =>
+    /j[aá].*cancelad|evento.*j[aá].*registrad/i.test(`${e.descricao || ''} ${e.complemento || ''}`)
+  );
+  const ok =
+    (response.statusCode >= 200 && response.statusCode < 300 && errors.length === 0) ||
+    alreadyCancelled;
 
   return {
     success: ok,
@@ -1211,9 +1219,11 @@ export async function cancelNfseOnSefin(params: {
     signedEventXml,
     eventoXml,
     rawResponse,
-    errors,
+    errors: alreadyCancelled ? [] : errors,
     message: ok
-      ? `Evento de cancelamento (101101) registrado na Sefin Nacional (${env})!`
+      ? alreadyCancelled
+        ? `NFS-e já constava como cancelada na Sefin Nacional (${env}) — status sincronizado!`
+        : `Evento de cancelamento (101101) registrado na Sefin Nacional (${env})!`
       : `Falha ao cancelar na Sefin Nacional: ${errors.map(e => `[${e.codigo}] ${e.descricao}`).join(' | ') || rawResponse.slice(0, 200)}`,
   };
 }

@@ -81,13 +81,15 @@ interface FiscalContextType {
   kiwifySyncError: string | null;
   setKiwifySecretMem: (secret: string) => void;
 
-  // Automatic in-app transmission queue (while tab is open)
+  // Automatic in-app transmission & refund-cancellation queue (while tab is open)
   autoTransmitState: {
     isRunning: boolean;
     currentInvoiceId: string | null;
     currentCustomerName: string | null;
     eligibleCount: number;
+    eligibleCancelCount: number;
     transmittedSessionCount: number;
+    cancelledSessionCount: number;
     failedSessionCount: number;
     lastRunAt: string | null;
     lastMessage: string | null;
@@ -311,13 +313,16 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const nextDpsNumberRef = useRef<number>(Math.max(1, Number(company.nextDpsNumber) || 1));
   const autoQueueBusyRef = useRef<boolean>(false);
   const autoFailedIdsRef = useRef<Set<string>>(new Set());
+  const autoCancelFailedIdsRef = useRef<Set<string>>(new Set());
 
   const [autoTransmitState, setAutoTransmitState] = useState<{
     isRunning: boolean;
     currentInvoiceId: string | null;
     currentCustomerName: string | null;
     eligibleCount: number;
+    eligibleCancelCount: number;
     transmittedSessionCount: number;
+    cancelledSessionCount: number;
     failedSessionCount: number;
     lastRunAt: string | null;
     lastMessage: string | null;
@@ -326,7 +331,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentInvoiceId: null,
     currentCustomerName: null,
     eligibleCount: 0,
+    eligibleCancelCount: 0,
     transmittedSessionCount: 0,
+    cancelledSessionCount: 0,
     failedSessionCount: 0,
     lastRunAt: null,
     lastMessage: null,
@@ -825,7 +832,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     invoiceId: string,
     reason: string
   ): Promise<{ success: boolean; message: string }> => {
-    const inv = invoices.find(i => i.id === invoiceId);
+    const activeCompany = companyRef.current;
+    const inv = invoicesRef.current.find(i => i.id === invoiceId);
     const now = new Date();
     const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
@@ -833,10 +841,10 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (inv?.chaveAcessoNacional) {
       const cancelRes = await cancelNfseDirect({
         chaveAcesso: inv.chaveAcessoNacional,
-        cnpjAutor: company.cnpj,
+        cnpjAutor: activeCompany.cnpj,
         motivoDesc: reason,
         motivoCode: '2',
-        environment: inv.environment || company.fiscalEnvironment || 'HOMOLOGACAO',
+        environment: inv.environment || activeCompany.fiscalEnvironment || 'HOMOLOGACAO',
         pfxBase64: certPfxBase64 || undefined,
         certPassword: certPasswordMem || undefined,
       });
@@ -1038,20 +1046,20 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
-  const simulateRefund = (saleId: string) => {
-    const sale = sales.find(s => s.id === saleId);
+  const simulateRefund = (saleId: string, reason = 'Estorno ou reembolso confirmado na plataforma de pagamento') => {
+    const sale = salesRef.current.find(s => s.id === saleId);
     if (!sale) return;
 
-    const platform = platforms.find(p => p.id === sale.platform);
+    const platform = platformsRef.current.find(p => p.id === sale.platform);
 
     // Mark sale as refunded
     setSales(prev =>
       prev.map(s => (s.id === saleId ? { ...s, status: 'refunded' } : s))
     );
 
-    // If platform cancels invoice on refund
-    if (platform?.cancelOnRefund && sale.invoiceId) {
-      cancelInvoice(sale.invoiceId, 'Reembolso de compra processado na plataforma de pagamento');
+    // If platform cancels invoice on refund, immediately cancel (official e101101 if already authorized)
+    if (platform?.cancelOnRefund !== false && sale.invoiceId) {
+      void cancelInvoice(sale.invoiceId, reason);
     }
   };
 
@@ -1061,14 +1069,36 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const orderId = order.order_id || `KW-${Date.now()}`;
       const orderRef = order.order_ref || orderId;
 
-      const platformConfig = platforms.find(p => p.id === 'kiwify');
-      const isApproved = order.order_status === 'paid' || order.webhook_event_type === 'order_approved';
-      const isRefunded = order.order_status === 'refunded' || order.webhook_event_type === 'order_refunded';
+      const platformConfig = platformsRef.current.find(p => p.id === 'kiwify');
+      const statusLower = String(order.order_status || '').toLowerCase();
+      const eventLower = String(order.webhook_event_type || payload.webhook_event_type || '').toLowerCase();
+      const isChargeback =
+        statusLower.includes('chargeback') ||
+        statusLower.includes('disput') ||
+        eventLower.includes('chargeback');
+      const isRefundedOrCanceled =
+        isChargeback ||
+        statusLower === 'refunded' ||
+        statusLower === 'canceled' ||
+        statusLower === 'cancelled' ||
+        statusLower === 'reversed' ||
+        statusLower.includes('refund') ||
+        statusLower.includes('estorn') ||
+        eventLower === 'order_refunded' ||
+        eventLower.includes('refund') ||
+        eventLower.includes('cancel');
 
-      if (isRefunded) {
-        const existingSale = sales.find(s => s.externalSaleId === orderId || s.externalSaleId === orderRef);
+      if (isRefundedOrCanceled) {
+        const existingSale = salesRef.current.find(
+          s => s.externalSaleId === orderId || s.externalSaleId === orderRef
+        );
         if (existingSale) {
-          simulateRefund(existingSale.id);
+          simulateRefund(
+            existingSale.id,
+            isChargeback
+              ? 'Chargeback ou contestacao de pagamento confirmada na Kiwify'
+              : 'Reembolso ou estorno de compra confirmado na plataforma Kiwify'
+          );
         }
         return;
       }
@@ -1294,9 +1324,15 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           warrantyDt.setDate(warrantyDt.getDate() + warrantyDays);
           const formattedWarranty = `${warrantyDt.getFullYear()}-${String(warrantyDt.getMonth() + 1).padStart(2, '0')}-${String(warrantyDt.getDate()).padStart(2, '0')} 23:59:59`;
 
+          const isCanceledOrReversed =
+            item.status === 'refunded' ||
+            item.status === 'chargedback' ||
+            item.status === 'refused';
           const mappedStatus: Sale['status'] =
             item.status === 'refunded' || item.status === 'chargedback'
               ? 'refunded'
+              : item.status === 'refused'
+              ? 'cancelled'
               : item.status === 'approved'
               ? 'approved'
               : 'pending';
@@ -1359,7 +1395,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 state: item.customer.state || '',
               },
               invoiceId: invId,
-              invoiceStatus: mappedStatus === 'refunded' ? 'CANCELADA' : 'PENDENTE',
+              invoiceStatus: isCanceledOrReversed ? 'CANCELADA' : 'PENDENTE',
             });
           }
         }
@@ -1388,9 +1424,13 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           seenSaleIds.add(saleId);
           const existing = existingBySaleId.get(saleId);
           const taxes = calculateTaxes(item.amount, company);
+          const isRefundOrCancel =
+            item.status === 'refunded' ||
+            item.status === 'chargedback' ||
+            item.status === 'refused';
 
           if (existing) {
-            // Never overwrite already EMITIDA / Sefin-authorized fields
+            // Preserve Sefin-authorized fields until official e101101 cancellation completes automatically
             if (existing.status === 'EMITIDA' || existing.chaveAcessoNacional) {
               nextInvoices.push(existing);
             } else {
@@ -1403,8 +1443,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 grossAmount: item.amount,
                 netAmount: Number((item.amount - taxes.totalTax).toFixed(2)),
                 taxes,
-                status:
-                  item.status === 'refunded' || item.status === 'chargedback' ? 'CANCELADA' : existing.status,
+                status: isRefundOrCancel ? 'CANCELADA' : existing.status,
                 customer: {
                   ...existing.customer,
                   name: item.customer.name,
@@ -1620,28 +1659,61 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       .sort((a, b) => (a.issuedAt || '').localeCompare(b.issuedAt || ''));
   };
 
+  const getEligibleAutoCancelInvoices = (): FiscalInvoice[] => {
+    const activePlatforms = platformsRef.current;
+    const activeSales = salesRef.current;
+    const activeInvoices = invoicesRef.current;
+
+    const salesById = new Map<string, Sale>();
+    activeSales.forEach(s => salesById.set(s.id, s));
+
+    const platformById = new Map<string, PlatformConfig>();
+    activePlatforms.forEach(p => platformById.set(p.id, p));
+
+    return activeInvoices
+      .filter(inv => {
+        // Only auto-cancel real invoices that were authorized on Sefin Nacional and are still EMITIDA
+        if (inv.status !== 'EMITIDA' || !inv.chaveAcessoNacional) return false;
+        if (autoCancelFailedIdsRef.current.has(inv.id)) return false;
+
+        const platform = platformById.get(inv.platform);
+        if (platform && platform.cancelOnRefund === false) return false;
+
+        const sale = salesById.get(inv.saleId);
+        if (!sale) return false;
+        return sale.status === 'refunded' || sale.status === 'cancelled';
+      })
+      .sort((a, b) => (a.issuedAt || '').localeCompare(b.issuedAt || ''));
+  };
+
   const runAutoTransmitNow = async () => {
     if (autoQueueBusyRef.current) return;
+    const pendingCancels = getEligibleAutoCancelInvoices();
+    const initialQueue = companyRef.current.autoTransmitEnabled
+      ? getEligibleAutoInvoices(new Date())
+      : [];
+
     if (!hasLoadedCert) {
       setAutoTransmitState(prev => ({
         ...prev,
         eligibleCount: getEligibleAutoInvoices(new Date()).length,
-        lastMessage: 'Carregue seu Certificado A1 para iniciar a transmissão automática.',
+        eligibleCancelCount: pendingCancels.length,
+        lastMessage: 'Carregue seu Certificado A1 para iniciar a transmissão e cancelamento automático.',
       }));
       return;
     }
 
-    const initialQueue = getEligibleAutoInvoices(new Date());
     setAutoTransmitState(prev => ({
       ...prev,
-      eligibleCount: initialQueue.length,
+      eligibleCount: getEligibleAutoInvoices(new Date()).length,
+      eligibleCancelCount: pendingCancels.length,
     }));
 
-    if (initialQueue.length === 0) {
+    if (pendingCancels.length === 0 && initialQueue.length === 0) {
       setAutoTransmitState(prev => ({
         ...prev,
         lastRunAt: new Date().toLocaleTimeString('pt-BR'),
-        lastMessage: 'Fila verificada: nenhuma nota pendente pronta para emissão automática no momento.',
+        lastMessage: 'Fila verificada: nenhuma nota pendente de emissão ou cancelamento no momento.',
       }));
       return;
     }
@@ -1650,10 +1722,60 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setAutoTransmitState(prev => ({
       ...prev,
       isRunning: true,
-      lastMessage: `Iniciando transmissão automática de ${initialQueue.length} nota(s) elegível(is)...`,
+      lastMessage:
+        pendingCancels.length > 0
+          ? `Processando ${pendingCancels.length} cancelamento(s) de estorno/reembolso na Sefin Nacional...`
+          : `Iniciando transmissão automática de ${initialQueue.length} nota(s) elegível(is)...`,
     }));
 
     try {
+      // 1. FIRST: Auto-cancel any emitted NFS-e whose sale was refunded, estornada, chargedback, or cancelled
+      for (const invToCancel of pendingCancels) {
+        const freshInv = invoicesRef.current.find(i => i.id === invToCancel.id);
+        if (!freshInv || freshInv.status !== 'EMITIDA' || !freshInv.chaveAcessoNacional) continue;
+
+        setAutoTransmitState(prev => ({
+          ...prev,
+          currentInvoiceId: freshInv.id,
+          currentCustomerName: freshInv.customer.name,
+          lastMessage: `Cancelando NFS-e #${freshInv.officialInvoiceNumber || freshInv.number} (estorno/reembolso) para ${freshInv.customer.name}...`,
+        }));
+
+        try {
+          const cancelRes = await cancelInvoice(
+            freshInv.id,
+            'Cancelamento automatico por estorno, reembolso ou chargeback confirmado na plataforma'
+          );
+          if (cancelRes.success) {
+            setAutoTransmitState(prev => ({
+              ...prev,
+              cancelledSessionCount: prev.cancelledSessionCount + 1,
+              lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+              lastMessage: `NFS-e #${freshInv.officialInvoiceNumber || freshInv.number} cancelada automaticamente na Sefin Nacional (reembolso/estorno)!`,
+            }));
+          } else {
+            autoCancelFailedIdsRef.current.add(freshInv.id);
+            setAutoTransmitState(prev => ({
+              ...prev,
+              failedSessionCount: prev.failedSessionCount + 1,
+              lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+              lastMessage: `Falha ao cancelar NFS-e de ${freshInv.customer.name}: ${cancelRes.message}`,
+            }));
+          }
+        } catch (err: any) {
+          autoCancelFailedIdsRef.current.add(freshInv.id);
+          setAutoTransmitState(prev => ({
+            ...prev,
+            failedSessionCount: prev.failedSessionCount + 1,
+            lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+            lastMessage: `Erro ao cancelar NFS-e de ${freshInv.customer.name}: ${err?.message || 'falha inesperada'}`,
+          }));
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+
+      // 2. SECOND: Auto-emit approved pending invoices respecting the user's configured trigger
       for (const candidate of initialQueue) {
         // Respect immediate pause by user
         if (!companyRef.current.autoTransmitEnabled) {
@@ -1667,9 +1789,18 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           break;
         }
 
-        // Re-check that invoice is still PENDENTE
+        // Re-check that invoice is still PENDENTE and linked sale wasn't refunded in the meantime
         const freshInv = invoicesRef.current.find(i => i.id === candidate.id);
-        if (!freshInv || freshInv.status !== 'PENDENTE') continue;
+        const freshSale = salesRef.current.find(s => s.id === candidate.saleId);
+        if (
+          !freshInv ||
+          freshInv.status !== 'PENDENTE' ||
+          !freshSale ||
+          freshSale.status === 'refunded' ||
+          freshSale.status === 'cancelled'
+        ) {
+          continue;
+        }
 
         setAutoTransmitState(prev => ({
           ...prev,
@@ -1717,12 +1848,14 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       autoQueueBusyRef.current = false;
       const remaining = getEligibleAutoInvoices(new Date()).length;
+      const remainingCancels = getEligibleAutoCancelInvoices().length;
       setAutoTransmitState(prev => ({
         ...prev,
         isRunning: false,
         currentInvoiceId: null,
         currentCustomerName: null,
         eligibleCount: remaining,
+        eligibleCancelCount: remainingCancels,
         lastRunAt: new Date().toLocaleTimeString('pt-BR'),
       }));
     }
@@ -1730,38 +1863,49 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const clearAutoTransmitFailures = () => {
     autoFailedIdsRef.current.clear();
+    autoCancelFailedIdsRef.current.clear();
     setAutoTransmitState(prev => ({
       ...prev,
       failedSessionCount: 0,
       eligibleCount: getEligibleAutoInvoices(new Date()).length,
-      lastMessage: 'Lista de falhas limpa. Notas pendentes serão reavaliadas na fila.',
+      eligibleCancelCount: getEligibleAutoCancelInvoices().length,
+      lastMessage: 'Lista de falhas limpa. Notas pendentes de emissão e cancelamento serão reavaliadas.',
     }));
   };
 
-  // Recompute eligible count whenever sales/invoices/platforms/cutoff change
+  // Recompute eligible emission & refund-cancellation counts whenever data changes
   useEffect(() => {
     if (!hasHydratedIdb) return;
     const count = getEligibleAutoInvoices(new Date()).length;
-    setAutoTransmitState(prev => (prev.eligibleCount === count ? prev : { ...prev, eligibleCount: count }));
+    const cancelCount = getEligibleAutoCancelInvoices().length;
+    setAutoTransmitState(prev =>
+      prev.eligibleCount === count && prev.eligibleCancelCount === cancelCount
+        ? prev
+        : { ...prev, eligibleCount: count, eligibleCancelCount: cancelCount }
+    );
   }, [hasHydratedIdb, sales, invoices, platforms, company.autoTransmitStartDate, company.autoTransmitEnabled]);
 
-  // Automatic queue runner while app is open
+  // Automatic queue runner while app is open (runs emissions when autoTransmitEnabled AND auto-cancels refunds/chargebacks whenever cert is loaded)
   useEffect(() => {
-    if (!hasHydratedIdb || !company.autoTransmitEnabled || !hasLoadedCert) return;
+    if (!hasHydratedIdb || !hasLoadedCert) return;
+    const hasPendingCancels = getEligibleAutoCancelInvoices().length > 0;
+    if (!company.autoTransmitEnabled && !hasPendingCancels) return;
 
-    // Kick off quickly after opening or receiving new sales
+    // Kick off quickly after opening, syncing refunds, or receiving new sales
     const immediateTimer = setTimeout(() => {
       void runAutoTransmitNow();
     }, 1500);
 
-    // Re-check every 30s (catches warranty expirations & new webhooks)
-    const interval = setInterval(() => {
-      void runAutoTransmitNow();
-    }, 30000);
+    // Re-check every 30s (catches new webhooks, approvals, and refunds)
+    const interval = company.autoTransmitEnabled
+      ? setInterval(() => {
+          void runAutoTransmitNow();
+        }, 30000)
+      : null;
 
     return () => {
       clearTimeout(immediateTimer);
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
     };
   }, [
     hasHydratedIdb,
@@ -1769,24 +1913,24 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     company.autoTransmitStartDate,
     company.fiscalEnvironment,
     hasLoadedCert,
-    sales.length,
+    sales,
     invoices.length,
     platforms,
   ]);
 
-  // Periodic background Kiwify sync (last 14 days every 5 minutes) when auto-transmit is active
+  // Periodic background Kiwify sync (last 30 days every 2 minutes) to detect both new approved sales AND late refunds/chargebacks
   useEffect(() => {
     if (!hasHydratedIdb || !company.autoTransmitEnabled || !hasKiwifySecret) return;
 
     const runIncrementalSync = () => {
       const now = new Date();
-      const start = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       const startIso = getLocalIsoDay(start);
       const endIso = getLocalIsoDay(now);
       void syncKiwifySales({ startDate: startIso, endDate: endIso });
     };
 
-    const interval = setInterval(runIncrementalSync, 5 * 60 * 1000);
+    const interval = setInterval(runIncrementalSync, 2 * 60 * 1000);
     return () => clearInterval(interval);
   }, [hasHydratedIdb, company.autoTransmitEnabled, hasKiwifySecret]);
 

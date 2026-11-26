@@ -60,7 +60,7 @@ export const initialPlatforms: PlatformConfig[] = [
     tagline: 'Vendas de cursos, infoprodutos e mentorias',
     enabled: true,
     invoiceModel: 'NFS-e',
-    trigger: 'on_warranty_expired',
+    trigger: 'on_payment_approved',
     sendEmailToCustomer: true,
     cancelOnRefund: true,
     clientId: 'cb4871c1-cdc7-4b85-a27c-4e89ef5557fb',
