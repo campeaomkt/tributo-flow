@@ -27,6 +27,11 @@ export interface RealKiwifySale {
     document: string;
     email: string;
     phone?: string;
+    zipCode?: string;
+    street?: string;
+    number?: string;
+    complement?: string;
+    neighborhood?: string;
     city: string;
     state: string;
   };
@@ -184,8 +189,13 @@ function normalizeKiwifySale(raw: any): RealKiwifySale {
       document: formatCpfCnpj(customerObj?.cpf || customerObj?.CPF || customerObj?.cnpj || customerObj?.CNPJ),
       email: String(customerObj?.email || ''),
       phone: customerObj?.mobile ? String(customerObj.mobile) : undefined,
-      city: String(addressObj?.city || ''),
-      state: String(addressObj?.state || ''),
+      zipCode: String(addressObj?.zipcode || addressObj?.zip_code || addressObj?.cep || ''),
+      street: String(addressObj?.street || addressObj?.address || addressObj?.logradouro || ''),
+      number: String(addressObj?.number || addressObj?.numero || ''),
+      complement: String(addressObj?.complement || addressObj?.complemento || ''),
+      neighborhood: String(addressObj?.neighborhood || addressObj?.bairro || ''),
+      city: String(addressObj?.city || addressObj?.cidade || ''),
+      state: String(addressObj?.state || addressObj?.uf || ''),
     },
   };
 }

@@ -126,6 +126,13 @@ export async function transmitDirectToPrefeitura(
       name: invoice.customer.name,
       document: invoice.customer.document,
       email: invoice.customer.email,
+      zipCode: invoice.customer.zipCode,
+      street: invoice.customer.street,
+      number: invoice.customer.number,
+      complement: invoice.customer.complement,
+      neighborhood: invoice.customer.neighborhood,
+      city: invoice.customer.city,
+      state: invoice.customer.state,
     },
     company: {
       corporateName: company.corporateName,
@@ -370,6 +377,11 @@ export interface RealKiwifySaleDto {
     document: string;
     email: string;
     phone?: string;
+    zipCode?: string;
+    street?: string;
+    number?: string;
+    complement?: string;
+    neighborhood?: string;
     city: string;
     state: string;
   };

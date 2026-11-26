@@ -48,6 +48,14 @@ export interface DpsInput {
     name: string;
     document: string;
     email?: string;
+    zipCode?: string;
+    street?: string;
+    number?: string;
+    complement?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    ibgeCode?: string;
   };
   company: {
     corporateName: string;
@@ -160,6 +168,52 @@ export function getIbgeCityCode(city?: string, state?: string): string {
   if (!city || !state) return '4201109'; // Anitápolis - SC
   const key = `${normalizeKey(city)}-${normalizeKey(state)}`;
   return IBGE_CITY_CODES[key] || '4201109';
+}
+
+interface ViaCepResolved {
+  ibge?: string;
+  logradouro?: string;
+  bairro?: string;
+  localidade?: string;
+  uf?: string;
+}
+
+const viaCepCache = new Map<string, ViaCepResolved | null>();
+
+async function lookupCepViaCep(cepDigits: string): Promise<ViaCepResolved | null> {
+  if (!/^\d{8}$/.test(cepDigits)) return null;
+  if (viaCepCache.has(cepDigits)) return viaCepCache.get(cepDigits) ?? null;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(`https://viacep.com.br/ws/${cepDigits}/json/`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      viaCepCache.set(cepDigits, null);
+      return null;
+    }
+    const data: any = await res.json();
+    if (!data || data.erro || !/^\d{7}$/.test(String(data.ibge || ''))) {
+      viaCepCache.set(cepDigits, null);
+      return null;
+    }
+    const resolved: ViaCepResolved = {
+      ibge: String(data.ibge),
+      logradouro: data.logradouro ? String(data.logradouro) : undefined,
+      bairro: data.bairro ? String(data.bairro) : undefined,
+      localidade: data.localidade ? String(data.localidade) : undefined,
+      uf: data.uf ? String(data.uf) : undefined,
+    };
+    viaCepCache.set(cepDigits, resolved);
+    return resolved;
+  } catch {
+    return null;
+  }
 }
 
 export function escapeXml(value: string): string {
@@ -410,13 +464,38 @@ export function buildDpsXml(
   // Sefin Nacional rule E0120: <IM> MUST be omitted when the municipality has no CNC NFS-e registration (e.g. Anitápolis/SC)
   const imTag = options?.includeIm && imPrest ? `<IM>${imPrest}</IM>` : '';
 
-  // Customer (Tomador)
+  // Customer (Tomador) — TCInfoPessoa exact XSD sequence: <CPF/CNPJ>, <xNome>, <end>, <email>
+  // Sefin Nacional rule E0234: <end> is MANDATORY whenever cIndOp (e.g. 100301) defines IBS incidence at buyer's domicile
   const customerDocDigits = digitsOnly(input.customer.document);
+  const custCepDigits = digitsOnly(input.customer.zipCode);
+  const companyCepDigits = digitsOnly(input.company.address?.zipCode);
+  const fallbackCep = companyCepDigits.length === 8 ? companyCepDigits : '88475000';
+  const hasRealCustCep = custCepDigits.length === 8 && /^\d{7}$/.test(digitsOnly(input.customer.ibgeCode));
+
+  const tomaCMun = hasRealCustCep ? digitsOnly(input.customer.ibgeCode) : cLocEmi;
+  const tomaCep = hasRealCustCep ? custCepDigits : fallbackCep;
+  const tomaXLgr = escapeXml(input.customer.street || 'NAO INFORMADO').slice(0, 255) || 'NAO INFORMADO';
+  const tomaNro = escapeXml(input.customer.number || 'SN').slice(0, 60) || 'SN';
+  const tomaXCplRaw = escapeXml(input.customer.complement || '').slice(0, 156);
+  const tomaXCplTag = tomaXCplRaw ? `<xCpl>${tomaXCplRaw}</xCpl>` : '';
+  const tomaXBairro = escapeXml(input.customer.neighborhood || 'CENTRO').slice(0, 60) || 'CENTRO';
+
+  const tomaEndTag =
+    `<end>` +
+    `<endNac><cMun>${tomaCMun}</cMun><CEP>${tomaCep}</CEP></endNac>` +
+    `<xLgr>${tomaXLgr}</xLgr>` +
+    `<nro>${tomaNro}</nro>` +
+    `${tomaXCplTag}` +
+    `<xBairro>${tomaXBairro}</xBairro>` +
+    `</end>`;
+
+  const tomaEmailTag = input.customer.email ? `<email>${escapeXml(input.customer.email)}</email>` : '';
+
   let tomaTag = '';
   if (customerDocDigits.length === 14) {
-    tomaTag = `<toma><CNPJ>${customerDocDigits}</CNPJ><xNome>${escapeXml(input.customer.name || 'TOMADOR NAO IDENTIFICADO')}</xNome>${input.customer.email ? `<email>${escapeXml(input.customer.email)}</email>` : ''}</toma>`;
+    tomaTag = `<toma><CNPJ>${customerDocDigits}</CNPJ><xNome>${escapeXml(input.customer.name || 'TOMADOR NAO IDENTIFICADO')}</xNome>${tomaEndTag}${tomaEmailTag}</toma>`;
   } else if (customerDocDigits.length === 11) {
-    tomaTag = `<toma><CPF>${customerDocDigits}</CPF><xNome>${escapeXml(input.customer.name || 'CONSUMIDOR FINAL')}</xNome>${input.customer.email ? `<email>${escapeXml(input.customer.email)}</email>` : ''}</toma>`;
+    tomaTag = `<toma><CPF>${customerDocDigits}</CPF><xNome>${escapeXml(input.customer.name || 'CONSUMIDOR FINAL')}</xNome>${tomaEndTag}${tomaEmailTag}</toma>`;
   }
 
   const cTribNac = normalizeCTribNac(input.serviceCode || input.company.serviceCode);
@@ -857,9 +936,28 @@ export async function transmitDpsToSefin(
     throw new Error(`O Certificado Digital A1 está expirado desde ${parsedCert.validTo.slice(0, 10)}.`);
   }
 
+  // 1.5 Resolve real buyer IBGE municipality code & missing street/neighborhood via ViaCEP if buyer has a CEP
+  let enrichedCustomer = { ...input.customer };
+  const rawCustCep = digitsOnly(input.customer.zipCode);
+  if (rawCustCep.length === 8 && !/^\d{7}$/.test(digitsOnly(input.customer.ibgeCode))) {
+    const cepInfo = await lookupCepViaCep(rawCustCep);
+    if (cepInfo?.ibge) {
+      enrichedCustomer = {
+        ...enrichedCustomer,
+        zipCode: rawCustCep,
+        ibgeCode: cepInfo.ibge,
+        street: enrichedCustomer.street || cepInfo.logradouro || 'NAO INFORMADO',
+        neighborhood: enrichedCustomer.neighborhood || cepInfo.bairro || 'CENTRO',
+        city: enrichedCustomer.city || cepInfo.localidade || '',
+        state: enrichedCustomer.state || cepInfo.uf || '',
+      };
+    }
+  }
+  const enrichedInput: DpsInput = { ...input, customer: enrichedCustomer, environment: env };
+
   const buildSignAndSend = async (includeIm: boolean, cClassTribOutsideGIBSCBS = false) => {
     const { dpsId: builtDpsId, xml: rawDpsXml } = buildDpsXml(
-      { ...input, environment: env },
+      enrichedInput,
       { includeIm, cClassTribOutsideGIBSCBS }
     );
     const signedXml = signXmlEnveloped(
