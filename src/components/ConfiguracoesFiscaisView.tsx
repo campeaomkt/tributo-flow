@@ -61,6 +61,18 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [dpsSeries, setDpsSeries] = useState(company.dpsSeries || '2');
   const [nextDpsNumber, setNextDpsNumber] = useState(String(company.nextDpsNumber || 1));
 
+  // Reforma Tributária (IBS / CBS — NFS-e Nacional v1.01)
+  const [reformaTributariaEnabled, setReformaTributariaEnabled] = useState(
+    company.reformaTributariaEnabled !== false
+  );
+  const [cNbs, setCNbs] = useState(company.cNbs || '115013000');
+  const [ibsCbsFinNfse, setIbsCbsFinNfse] = useState(company.ibsCbsFinNfse || '0');
+  const [ibsCbsIndFinal, setIbsCbsIndFinal] = useState<'0' | '1'>(company.ibsCbsIndFinal || '1');
+  const [ibsCbsIndOp, setIbsCbsIndOp] = useState(company.ibsCbsIndOp || '100301');
+  const [ibsCbsIndDest, setIbsCbsIndDest] = useState(company.ibsCbsIndDest || '0');
+  const [ibsCbsCst, setIbsCbsCst] = useState(company.ibsCbsCst || '000');
+  const [ibsCbsClassTrib, setIbsCbsClassTrib] = useState(company.ibsCbsClassTrib || '000001');
+
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   const [certPassword, setCertPassword] = useState('');
@@ -246,6 +258,14 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
       fiscalEnvironment,
       dpsSeries: dpsSeries.replace(/\D/g, '') || '2',
       nextDpsNumber: Math.max(1, parseInt(nextDpsNumber.replace(/\D/g, ''), 10) || 1),
+      reformaTributariaEnabled,
+      cNbs: cNbs.replace(/\D/g, '').slice(0, 9) || '115013000',
+      ibsCbsFinNfse: ibsCbsFinNfse.replace(/\D/g, '').slice(0, 1) || '0',
+      ibsCbsIndFinal,
+      ibsCbsIndOp: ibsCbsIndOp.replace(/\D/g, '').slice(0, 6) || '100301',
+      ibsCbsIndDest: ibsCbsIndDest.replace(/\D/g, '').slice(0, 1) || '0',
+      ibsCbsCst: ibsCbsCst.replace(/\D/g, '').slice(0, 3) || '000',
+      ibsCbsClassTrib: ibsCbsClassTrib.replace(/\D/g, '').slice(0, 6) || '000001',
     });
 
     setSavedSuccess(true);
@@ -633,6 +653,170 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Reforma Tributária (IBS / CBS — NFS-e Padrão Nacional v1.01) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center border border-indigo-200">
+              <FileBadge className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-bold text-slate-800 text-base">Reforma Tributária (IBS / CBS — DPS v1.01)</h2>
+                <span
+                  className={`px-2 py-0.5 rounded-full font-bold text-[10px] border ${
+                    reformaTributariaEnabled
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : 'bg-slate-100 text-slate-600 border-slate-300'
+                  }`}
+                >
+                  {reformaTributariaEnabled ? 'Ativo (Sim)' : 'Desativado (Não)'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Envia o grupo <code>&lt;IBSCBS&gt;</code> e o código <code>&lt;cNBS&gt;</code> na DPS v1.01, equivalente a responder <strong>"Sim"</strong> para enviar informações da Reforma no Portal Nacional.
+              </p>
+            </div>
+          </div>
+
+          <label className="inline-flex items-center gap-2.5 cursor-pointer shrink-0 select-none">
+            <span className="text-xs font-bold text-slate-700">
+              {reformaTributariaEnabled ? 'Enviar na DPS' : 'Não enviar'}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={reformaTributariaEnabled}
+              onClick={() => setReformaTributariaEnabled(prev => !prev)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                reformaTributariaEnabled ? 'bg-indigo-600' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  reformaTributariaEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </label>
+        </div>
+
+        {reformaTributariaEnabled && (
+          <div className="space-y-4 pt-2 border-t border-slate-100 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Código NBS (cNBS — 9 dígitos)
+                </label>
+                <input
+                  type="text"
+                  value={cNbs}
+                  onChange={e => setCNbs(e.target.value.replace(/\D/g, '').slice(0, 9))}
+                  placeholder="115013000"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Padrão <strong>115013000</strong> (Suporte em TI — correlação Anexo VIII p/ 010701)
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Indicador de Operação (cIndOp)
+                </label>
+                <input
+                  type="text"
+                  value={ibsCbsIndOp}
+                  onChange={e => setIbsCbsIndOp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="100301"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  6 dígitos (Anexo VII). Padrão <strong>100301</strong> (serviços digitais/remotos onerosos)
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  CST IBS/CBS (3 dígitos)
+                </label>
+                <input
+                  type="text"
+                  value={ibsCbsCst}
+                  onChange={e => setIbsCbsCst(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                  placeholder="000"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Padrão <strong>000</strong> (Tributação integral)
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Classificação (cClassTrib — 6 dígitos)
+                </label>
+                <input
+                  type="text"
+                  value={ibsCbsClassTrib}
+                  onChange={e => setIbsCbsClassTrib(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000001"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  3 primeiros dígitos devem coincidir com o CST (ex: <strong>000001</strong>)
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Finalidade da NFS-e (finNFSe)
+                </label>
+                <select
+                  value={ibsCbsFinNfse}
+                  onChange={e => setIbsCbsFinNfse(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800"
+                >
+                  <option value="0">0 — NFS-e Regular (Padrão)</option>
+                  <option value="1">1 — Nota de Crédito</option>
+                  <option value="2">2 — Nota de Débito</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Consumidor Final (indFinal)
+                </label>
+                <select
+                  value={ibsCbsIndFinal}
+                  onChange={e => setIbsCbsIndFinal(e.target.value as '0' | '1')}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800"
+                >
+                  <option value="1">1 — Sim (Consumidor final — padrão Kiwify/B2C)</option>
+                  <option value="0">0 — Não (Operação intermediária / B2B)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Destinatário do Serviço (indDest)
+                </label>
+                <select
+                  value={ibsCbsIndDest}
+                  onChange={e => setIbsCbsIndDest(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-slate-800"
+                >
+                  <option value="0">0 — O próprio tomador/adquirente (Padrão)</option>
+                  <option value="1">1 — Terceiro diferente do tomador</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Motor de Transmissão Direta Sefin Nacional (Sem Intermediários) */}

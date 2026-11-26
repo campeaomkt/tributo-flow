@@ -168,6 +168,8 @@ export interface CompanySettings {
   municipalWsUrl?: string;
   dpsSeries?: string; // Série exclusiva do TributoFlow (padrão "2" para não colidir com Série 1 de outros emissores)
   nextDpsNumber?: number; // Próximo número sequencial de DPS a ser transmitido
+  autoTransmitEnabled?: boolean; // Transmissão automática em fila enquanto o app está aberto
+  autoTransmitStartDate?: string; // Data mínima (YYYY-MM-DD) das vendas elegíveis para auto-emissão (evita reemitir histórico da Spedy)
   taxRegime: TaxRegime;
   simplesAnexo: 'ANEXO_I' | 'ANEXO_III' | 'ANEXO_V';
   fatorRActive: boolean;
@@ -177,6 +179,15 @@ export interface CompanySettings {
   defaultIssRate: number; // e.g. 2.0%
   serviceCode: string; // "010701" (cTribNac 6 dígitos)
   cnaePrincipal: string; // "6202-3/00"
+  // Reforma Tributária (IBS / CBS — NFS-e Nacional v1.01)
+  reformaTributariaEnabled?: boolean; // Enviar grupo <IBSCBS> + <cNBS> na DPS v1.01
+  cNbs?: string; // Código NBS 9 dígitos (ex: "115013000" para cTribNac 010701)
+  ibsCbsFinNfse?: string; // Finalidade da NFS-e ("0" = Regular)
+  ibsCbsIndFinal?: '0' | '1'; // Consumidor final ("1" = Sim, "0" = Não)
+  ibsCbsIndOp?: string; // Código Indicador da Operação - 6 dígitos (ex: "100301")
+  ibsCbsIndDest?: string; // Indicador do destinatário ("0" = próprio tomador/adquirente)
+  ibsCbsCst?: string; // CST IBS/CBS - 3 dígitos (ex: "000" = Tributação integral)
+  ibsCbsClassTrib?: string; // cClassTrib - 6 dígitos (ex: "000001")
   address: {
     street: string;
     number: string;

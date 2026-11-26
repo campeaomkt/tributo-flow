@@ -59,6 +59,14 @@ export interface DpsInput {
     taxRegime: 'MEI' | 'SIMPLES_NACIONAL' | 'LUCRO_PRESUMIDO' | 'LUCRO_REAL';
     simplesApuracaoRegime?: string;
     serviceCode: string;
+    reformaTributariaEnabled?: boolean;
+    cNbs?: string;
+    ibsCbsFinNfse?: string;
+    ibsCbsIndFinal?: '0' | '1';
+    ibsCbsIndOp?: string;
+    ibsCbsIndDest?: string;
+    ibsCbsCst?: string;
+    ibsCbsClassTrib?: string;
     address: {
       city: string;
       state: string;
@@ -359,11 +367,12 @@ function formatBrasiliaIso(date: Date = new Date()): string {
 }
 
 /**
- * Builds the official Padrão Nacional DPS XML (versao 1.00) strictly following the XSD element order.
+ * Builds the official Padrão Nacional DPS XML (versao 1.01 with Reforma Tributária IBS/CBS, or 1.00 if disabled)
+ * strictly following the XSD element order.
  */
 export function buildDpsXml(
   input: DpsInput,
-  options?: { includeIm?: boolean }
+  options?: { includeIm?: boolean; cClassTribOutsideGIBSCBS?: boolean }
 ): { dpsId: string; xml: string } {
   const tpAmb = input.environment === 'PRODUCAO' ? '1' : '2';
   const cLocEmi = getIbgeCityCode(input.company.address?.city, input.company.address?.state);
@@ -414,6 +423,41 @@ export function buildDpsXml(
   const xDescServ = escapeXml(input.description || 'Licenciamento e acesso a plataforma de conteudo digital').slice(0, 2000);
   const vServ = Number(input.grossAmount || 0).toFixed(2);
 
+  // Reforma Tributária (IBS / CBS — NFS-e Padrão Nacional v1.01)
+  const includeReforma = input.company.reformaTributariaEnabled !== false;
+  const dpsVersion = includeReforma ? '1.01' : '1.00';
+
+  // Rule E0322: <cNBS> (9 digits, no punctuation) is mandatory inside <cServ> whenever <IBSCBS> is sent
+  const rawNbsDigits = digitsOnly(input.company.cNbs || '115013000');
+  const cNbs = (rawNbsDigits.length === 9 ? rawNbsDigits : rawNbsDigits.padEnd(9, '0').slice(0, 9)) || '115013000';
+  const cNbsTag = includeReforma ? `<cNBS>${cNbs}</cNBS>` : '';
+
+  let ibsCbsTag = '';
+  if (includeReforma) {
+    const finNFSe = digitsOnly(input.company.ibsCbsFinNfse || '0').slice(0, 1) || '0';
+    const indFinal = input.company.ibsCbsIndFinal === '0' ? '0' : '1';
+    const cIndOpDigits = digitsOnly(input.company.ibsCbsIndOp || '100301');
+    const cIndOp = (cIndOpDigits.length === 6 ? cIndOpDigits : '100301');
+    const indDest = digitsOnly(input.company.ibsCbsIndDest || '0').slice(0, 1) || '0';
+    const cstDigits = digitsOnly(input.company.ibsCbsCst || '000');
+    const cst = cstDigits.length === 3 ? cstDigits : '000';
+    const cClassDigits = digitsOnly(input.company.ibsCbsClassTrib || '000001');
+    const cClassTrib = cClassDigits.length === 6 ? cClassDigits : '000001';
+
+    const tribInner = options?.cClassTribOutsideGIBSCBS
+      ? `<cClassTrib>${cClassTrib}</cClassTrib><gIBSCBS><CST>${cst}</CST></gIBSCBS>`
+      : `<gIBSCBS><CST>${cst}</CST><cClassTrib>${cClassTrib}</cClassTrib></gIBSCBS>`;
+
+    ibsCbsTag =
+      `<IBSCBS>` +
+      `<finNFSe>${finNFSe}</finNFSe>` +
+      `<indFinal>${indFinal}</indFinal>` +
+      `<cIndOp>${cIndOp}</cIndOp>` +
+      `<indDest>${indDest}</indDest>` +
+      `<valores><trib>${tribInner}</trib></valores>` +
+      `</IBSCBS>`;
+  }
+
   // totTrib block according to Simples Nacional / MEI / Normal
   let totTribTag = '';
   if (opSimpNac === '3') {
@@ -434,11 +478,11 @@ export function buildDpsXml(
   // Minified XML without unnecessary whitespace or namespace prefixes (strict Sefin requirement)
   const xml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">` +
+    `<DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${dpsVersion}">` +
     `<infDPS Id="${dpsId}">` +
     `<tpAmb>${tpAmb}</tpAmb>` +
     `<dhEmi>${nowBrtIso}</dhEmi>` +
-    `<verAplic>TributoFlow_1.0</verAplic>` +
+    `<verAplic>TributoFlow_1.1</verAplic>` +
     `<serie>${serieStr}</serie>` +
     `<nDPS>${nDpsStr}</nDPS>` +
     `<dCompet>${dCompet}</dCompet>` +
@@ -458,7 +502,7 @@ export function buildDpsXml(
     `${tomaTag}` +
     `<serv>` +
     `<locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest>` +
-    `<cServ><cTribNac>${cTribNac}</cTribNac><xDescServ>${xDescServ}</xDescServ></cServ>` +
+    `<cServ><cTribNac>${cTribNac}</cTribNac><xDescServ>${xDescServ}</xDescServ>${cNbsTag}</cServ>` +
     `</serv>` +
     `<valores>` +
     `<vServPrest><vServ>${vServ}</vServ></vServPrest>` +
@@ -467,6 +511,7 @@ export function buildDpsXml(
     `${totTribTag}` +
     `</trib>` +
     `</valores>` +
+    `${ibsCbsTag}` +
     `</infDPS>` +
     `</DPS>`;
 
@@ -812,10 +857,10 @@ export async function transmitDpsToSefin(
     throw new Error(`O Certificado Digital A1 está expirado desde ${parsedCert.validTo.slice(0, 10)}.`);
   }
 
-  const buildSignAndSend = async (includeIm: boolean) => {
+  const buildSignAndSend = async (includeIm: boolean, cClassTribOutsideGIBSCBS = false) => {
     const { dpsId: builtDpsId, xml: rawDpsXml } = buildDpsXml(
       { ...input, environment: env },
-      { includeIm }
+      { includeIm, cClassTribOutsideGIBSCBS }
     );
     const signedXml = signXmlEnveloped(
       rawDpsXml,
@@ -860,7 +905,9 @@ export async function transmitDpsToSefin(
 
   // 2–5. Send without <IM> first (fixes E0120 for municipalities without CNC registration like Anitápolis/SC).
   // If another municipality ever explicitly demands <IM> (e.g. E0119/E0121), automatically retry with <IM>.
-  let attempt = await buildSignAndSend(false);
+  // Also if SefinNacional XSD ever switches to NT-009 tag placement (<cClassTrib> sibling of <gIBSCBS>), auto-retry cleanly.
+  let useIm = false;
+  let attempt = await buildSignAndSend(useIm, false);
   const hasImNumber = Boolean(digitsOnly(input.company.municipalRegistration));
   const requiresIm = attempt.errors.some(
     e =>
@@ -869,7 +916,17 @@ export async function transmitDpsToSefin(
       /inscri[cç][aã]o municipal.*obrigat|im.*deve ser informad/i.test(e.descricao || '')
   );
   if (hasImNumber && requiresIm) {
-    attempt = await buildSignAndSend(true);
+    useIm = true;
+    attempt = await buildSignAndSend(useIm, false);
+  }
+  const wantsNt009ClassTrib =
+    input.company.reformaTributariaEnabled !== false &&
+    attempt.errors.some(e => {
+      const txt = `${e.codigo} ${e.descricao} ${e.complemento || ''}`;
+      return /cClassTrib/i.test(txt) && /(schema|xsd|esperad|invalid|inv[aá]lid|elemento|RNG6110|E1235)/i.test(txt);
+    });
+  if (wantsNt009ClassTrib) {
+    attempt = await buildSignAndSend(useIm, true);
   }
 
   const { dpsId, signedDpsXml, dpsXmlGZipB64, response, rawResponse, parsedJson, errors } = attempt;

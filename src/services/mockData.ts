@@ -16,6 +16,8 @@ export const initialCompanySettings: CompanySettings = {
   fiscalEnvironment: 'HOMOLOGACAO',
   dpsSeries: '2',
   nextDpsNumber: 1,
+  autoTransmitEnabled: false,
+  autoTransmitStartDate: new Date().toISOString().slice(0, 10),
   taxRegime: 'SIMPLES_NACIONAL',
   simplesAnexo: 'ANEXO_III',
   fatorRActive: false,
@@ -24,6 +26,14 @@ export const initialCompanySettings: CompanySettings = {
   defaultIssRate: 2.0,
   serviceCode: '010701', // cTribNac 6 dígitos: 01.07.01 - Suporte técnico e serviços digitais
   cnaePrincipal: '6202-3/00', // Desenvolvimento e licenciamento de softwares e infoprodutos
+  reformaTributariaEnabled: true,
+  cNbs: '115013000', // 1.1501.30.00 - Serviços de suporte em TI (Anexo VIII p/ 010701)
+  ibsCbsFinNfse: '0',
+  ibsCbsIndFinal: '1',
+  ibsCbsIndOp: '100301',
+  ibsCbsIndDest: '0',
+  ibsCbsCst: '000',
+  ibsCbsClassTrib: '000001',
   address: {
     zipCode: '88475-000',
     street: 'RUA ARCELINA SOUZA BRAND',

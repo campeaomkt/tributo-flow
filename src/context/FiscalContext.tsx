@@ -81,6 +81,20 @@ interface FiscalContextType {
   kiwifySyncError: string | null;
   setKiwifySecretMem: (secret: string) => void;
 
+  // Automatic in-app transmission queue (while tab is open)
+  autoTransmitState: {
+    isRunning: boolean;
+    currentInvoiceId: string | null;
+    currentCustomerName: string | null;
+    eligibleCount: number;
+    transmittedSessionCount: number;
+    failedSessionCount: number;
+    lastRunAt: string | null;
+    lastMessage: string | null;
+  };
+  runAutoTransmitNow: () => Promise<void>;
+  clearAutoTransmitFailures: () => void;
+
   // Actions
   updateCompany: (settings: Partial<CompanySettings>) => void;
   updatePlatform: (platformId: PlatformId, config: Partial<PlatformConfig>) => void;
@@ -144,12 +158,27 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           parsed.fatorRActive && (!parsed.rbt12 || parsed.rbt12 <= 0) && (!parsed.payroll12 || parsed.payroll12 <= 0)
             ? false
             : Boolean(parsed.fatorRActive);
+        const todayLocalIso = (() => {
+          const d = new Date();
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        })();
         return {
           ...initialCompanySettings,
           ...parsed,
           fatorRActive: sanitizedFatorR,
           dpsSeries: parsed.dpsSeries || '2',
           nextDpsNumber: Math.max(1, Number(parsed.nextDpsNumber) || 1),
+          autoTransmitEnabled: Boolean(parsed.autoTransmitEnabled),
+          autoTransmitStartDate: parsed.autoTransmitStartDate || todayLocalIso,
+          reformaTributariaEnabled:
+            parsed.reformaTributariaEnabled !== undefined ? Boolean(parsed.reformaTributariaEnabled) : true,
+          cNbs: parsed.cNbs || '115013000',
+          ibsCbsFinNfse: parsed.ibsCbsFinNfse || '0',
+          ibsCbsIndFinal: parsed.ibsCbsIndFinal === '0' ? '0' : '1',
+          ibsCbsIndOp: parsed.ibsCbsIndOp || '100301',
+          ibsCbsIndDest: parsed.ibsCbsIndDest || '0',
+          ibsCbsCst: parsed.ibsCbsCst || '000',
+          ibsCbsClassTrib: parsed.ibsCbsClassTrib || '000001',
           municipalRegistration: parsed.municipalRegistration || '1618',
           certificatePassword: undefined, // Never hydrate secret from localStorage
         };
@@ -246,6 +275,40 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [sales, setSales] = useState<Sale[]>(() => generateInitialInvoices().sales);
   const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => generateInitialInvoices().invoices);
+  const [hasHydratedIdb, setHasHydratedIdb] = useState(false);
+
+  // Live refs for race-free sequential auto-transmission queue
+  const companyRef = useRef(company);
+  companyRef.current = company;
+  const platformsRef = useRef(platforms);
+  platformsRef.current = platforms;
+  const salesRef = useRef(sales);
+  salesRef.current = sales;
+  const invoicesRef = useRef(invoices);
+  invoicesRef.current = invoices;
+  const nextDpsNumberRef = useRef<number>(Math.max(1, Number(company.nextDpsNumber) || 1));
+  const autoQueueBusyRef = useRef<boolean>(false);
+  const autoFailedIdsRef = useRef<Set<string>>(new Set());
+
+  const [autoTransmitState, setAutoTransmitState] = useState<{
+    isRunning: boolean;
+    currentInvoiceId: string | null;
+    currentCustomerName: string | null;
+    eligibleCount: number;
+    transmittedSessionCount: number;
+    failedSessionCount: number;
+    lastRunAt: string | null;
+    lastMessage: string | null;
+  }>({
+    isRunning: false,
+    currentInvoiceId: null,
+    currentCustomerName: null,
+    eligibleCount: 0,
+    transmittedSessionCount: 0,
+    failedSessionCount: 0,
+    lastRunAt: null,
+    lastMessage: null,
+  });
 
   const [monthlyClosings, setMonthlyClosings] = useState<MonthlyClosing[]>(() => {
     try {
@@ -328,6 +391,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setInvoices(refreshedInvoices);
         }
         hasHydratedIdbRef.current = true;
+        setHasHydratedIdb(true);
       }
 
       // 1. Restore A1 certificate from encrypted IndexedDB vault if saved previously
@@ -511,8 +575,13 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     ];
     const hasTaxChange = taxKeys.some(k => Object.prototype.hasOwnProperty.call(settings, k));
 
+    if (typeof settings.nextDpsNumber === 'number' && !Number.isNaN(settings.nextDpsNumber)) {
+      nextDpsNumberRef.current = Math.max(1, settings.nextDpsNumber);
+    }
+
     setCompany(prev => {
       const nextCompany = { ...prev, ...settings };
+      companyRef.current = nextCompany;
       if (hasTaxChange) {
         setInvoices(prevInvoices =>
           prevInvoices.map(inv => {
@@ -571,15 +640,22 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const transmitInvoiceDirect = async (
     invoiceId: string,
     provider: MunicipalProvider = 'PADRAO_NACIONAL',
-    environment: FiscalEnvironment = company.fiscalEnvironment || 'HOMOLOGACAO'
+    environment?: FiscalEnvironment
   ): Promise<DirectTransmissionResult> => {
-    const inv = invoices.find(i => i.id === invoiceId);
+    const activeCompany = companyRef.current;
+    const effectiveEnv: FiscalEnvironment =
+      environment || activeCompany.fiscalEnvironment || 'HOMOLOGACAO';
+    const inv = invoicesRef.current.find(i => i.id === invoiceId);
     if (!inv) throw new Error('Nota fiscal não encontrada.');
 
-    // Always use TributoFlow's dedicated DPS series (default "2") and next sequential DPS number
-    // so we NEVER collide with RPS/DPS numbers already emitted on Series 1 by another issuer (e.g., Spedy)
-    const activeSeries = (company.dpsSeries || '2').replace(/\D/g, '') || '2';
-    const nextNum = Math.max(1, Number(company.nextDpsNumber) || 1);
+    // Always use TributoFlow's dedicated DPS series (default "2") and strictly sequential DPS counter ref
+    // so sequential auto-transmissions NEVER collide on DPS numbering or with Spedy's Series 1
+    const activeSeries = (activeCompany.dpsSeries || '2').replace(/\D/g, '') || '2';
+    const nextNum = Math.max(
+      1,
+      nextDpsNumberRef.current || 1,
+      Number(activeCompany.nextDpsNumber) || 1
+    );
     const invToSend: FiscalInvoice = {
       ...inv,
       series: activeSeries,
@@ -588,20 +664,26 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const result = await transmitDirectToPrefeitura(
       invToSend,
-      company,
+      activeCompany,
       provider,
-      environment,
+      effectiveEnv,
       certPfxBase64 || undefined,
       certPasswordMem || undefined
     );
 
     if (result.success) {
-      // Advance sequential DPS counter so the next emission uses nextNum + 1
-      setCompany(prev => ({
-        ...prev,
-        dpsSeries: activeSeries,
-        nextDpsNumber: Math.max((prev.nextDpsNumber || 1), nextNum + 1),
-      }));
+      // Advance sequential DPS counter immediately in ref + state so the next queued emission gets nextNum + 1
+      const advancedNext = nextNum + 1;
+      nextDpsNumberRef.current = Math.max(nextDpsNumberRef.current, advancedNext);
+      setCompany(prev => {
+        const updated = {
+          ...prev,
+          dpsSeries: activeSeries,
+          nextDpsNumber: Math.max(prev.nextDpsNumber || 1, advancedNext),
+        };
+        companyRef.current = updated;
+        return updated;
+      });
 
       setInvoices(prev =>
         prev.map(i => {
@@ -652,11 +734,17 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         result.errors?.some(e => e.codigo === 'E0014') ||
         (result.message || '').includes('E0014');
       if (isDuplicateDps) {
-        setCompany(prev => ({
-          ...prev,
-          dpsSeries: activeSeries,
-          nextDpsNumber: Math.max((prev.nextDpsNumber || 1), nextNum + 1),
-        }));
+        const advancedNext = nextNum + 1;
+        nextDpsNumberRef.current = Math.max(nextDpsNumberRef.current, advancedNext);
+        setCompany(prev => {
+          const updated = {
+            ...prev,
+            dpsSeries: activeSeries,
+            nextDpsNumber: Math.max(prev.nextDpsNumber || 1, advancedNext),
+          };
+          companyRef.current = updated;
+          return updated;
+        });
       }
 
       // Never fake EMITIDA — keep PENDENTE and store the real Sefin Nacional rejection + signed XML for inspection
@@ -1366,6 +1454,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setInvoices(prev =>
       prev.map(inv => {
         if (inv.saleId !== saleId) return inv;
+        autoFailedIdsRef.current.delete(inv.id);
         const newAmount = updates.amount !== undefined ? updates.amount : inv.grossAmount;
         const newTaxes = calculateTaxes(newAmount, company);
         const newProd = updates.productName || inv.productName;
@@ -1386,6 +1475,250 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
     );
   };
+
+  // --- AUTOMATIC IN-APP TRANSMISSION ENGINE (RESPECTS USER TRIGGER + WARRANTY + CUTOFF DATE) ---
+  const parseLocalTimestamp = (raw?: string): Date | null => {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split('-').map(Number);
+      return new Date(y, m - 1, d, 0, 0, 0);
+    }
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(trimmed)) {
+      const parsed = new Date(trimmed.replace(' ', 'T'));
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const getLocalIsoDay = (date: Date): string => {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+
+  const getEligibleAutoInvoices = (now: Date): FiscalInvoice[] => {
+    const activeCompany = companyRef.current;
+    const activePlatforms = platformsRef.current;
+    const activeSales = salesRef.current;
+    const activeInvoices = invoicesRef.current;
+    const cutoffIso = activeCompany.autoTransmitStartDate || getLocalIsoDay(now);
+
+    const salesById = new Map<string, Sale>();
+    activeSales.forEach(s => salesById.set(s.id, s));
+
+    const platformById = new Map<string, PlatformConfig>();
+    activePlatforms.forEach(p => platformById.set(p.id, p));
+
+    return activeInvoices
+      .filter(inv => {
+        if (inv.status !== 'PENDENTE') return false;
+        if (autoFailedIdsRef.current.has(inv.id)) return false;
+
+        const docDigits = (inv.customer?.document || '').replace(/\D/g, '');
+        if (docDigits.length !== 11 && docDigits.length !== 14) return false;
+
+        const platform = platformById.get(inv.platform);
+        if (!platform || !platform.enabled) return false;
+        if (platform.trigger === 'manual') return false;
+
+        const sale = salesById.get(inv.saleId);
+        if (!sale) return false;
+        if (sale.status === 'refunded' || sale.status === 'cancelled') return false;
+
+        const baseDate = parseLocalTimestamp(sale.paidAt || sale.createdAt || inv.issuedAt);
+        if (!baseDate) return false;
+
+        // Safety cutoff: NEVER auto-emit historical sales older than autoTransmitStartDate
+        const saleIsoDay = getLocalIsoDay(baseDate);
+        if (saleIsoDay < cutoffIso) return false;
+
+        if (platform.trigger === 'on_created') {
+          return true;
+        }
+        if (platform.trigger === 'on_payment_approved') {
+          return sale.status === 'approved';
+        }
+        if (platform.trigger === 'on_warranty_expired') {
+          if (sale.status !== 'approved') return false;
+          const warrantyDays = Math.max(0, Number(platform.warrantyDays ?? 7));
+          const eligibleAtMs = baseDate.getTime() + warrantyDays * 24 * 60 * 60 * 1000;
+          return now.getTime() >= eligibleAtMs;
+        }
+        return false;
+      })
+      .sort((a, b) => (a.issuedAt || '').localeCompare(b.issuedAt || ''));
+  };
+
+  const runAutoTransmitNow = async () => {
+    if (autoQueueBusyRef.current) return;
+    if (!hasLoadedCert) {
+      setAutoTransmitState(prev => ({
+        ...prev,
+        eligibleCount: getEligibleAutoInvoices(new Date()).length,
+        lastMessage: 'Carregue seu Certificado A1 para iniciar a transmissão automática.',
+      }));
+      return;
+    }
+
+    const initialQueue = getEligibleAutoInvoices(new Date());
+    setAutoTransmitState(prev => ({
+      ...prev,
+      eligibleCount: initialQueue.length,
+    }));
+
+    if (initialQueue.length === 0) {
+      setAutoTransmitState(prev => ({
+        ...prev,
+        lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+        lastMessage: 'Fila verificada: nenhuma nota pendente pronta para emissão automática no momento.',
+      }));
+      return;
+    }
+
+    autoQueueBusyRef.current = true;
+    setAutoTransmitState(prev => ({
+      ...prev,
+      isRunning: true,
+      lastMessage: `Iniciando transmissão automática de ${initialQueue.length} nota(s) elegível(is)...`,
+    }));
+
+    try {
+      for (const candidate of initialQueue) {
+        // Respect immediate pause by user
+        if (!companyRef.current.autoTransmitEnabled) {
+          setAutoTransmitState(prev => ({
+            ...prev,
+            isRunning: false,
+            currentInvoiceId: null,
+            currentCustomerName: null,
+            lastMessage: 'Transmissão automática pausada pelo usuário.',
+          }));
+          break;
+        }
+
+        // Re-check that invoice is still PENDENTE
+        const freshInv = invoicesRef.current.find(i => i.id === candidate.id);
+        if (!freshInv || freshInv.status !== 'PENDENTE') continue;
+
+        setAutoTransmitState(prev => ({
+          ...prev,
+          currentInvoiceId: freshInv.id,
+          currentCustomerName: freshInv.customer.name,
+          lastMessage: `Transmitindo automaticamente NFS-e para ${freshInv.customer.name}...`,
+        }));
+
+        try {
+          const res = await transmitInvoiceDirect(
+            freshInv.id,
+            'PADRAO_NACIONAL',
+            companyRef.current.fiscalEnvironment || 'HOMOLOGACAO'
+          );
+
+          if (res.success) {
+            setAutoTransmitState(prev => ({
+              ...prev,
+              transmittedSessionCount: prev.transmittedSessionCount + 1,
+              lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+              lastMessage: `NFS-e #${res.officialNumber} autorizada automaticamente para ${freshInv.customer.name}!`,
+            }));
+          } else {
+            autoFailedIdsRef.current.add(freshInv.id);
+            setAutoTransmitState(prev => ({
+              ...prev,
+              failedSessionCount: prev.failedSessionCount + 1,
+              lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+              lastMessage: `Rejeitada para ${freshInv.customer.name}: ${res.message}`,
+            }));
+          }
+        } catch (err: any) {
+          autoFailedIdsRef.current.add(freshInv.id);
+          setAutoTransmitState(prev => ({
+            ...prev,
+            failedSessionCount: prev.failedSessionCount + 1,
+            lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+            lastMessage: `Erro ao transmitir para ${freshInv.customer.name}: ${err?.message || 'falha inesperada'}`,
+          }));
+        }
+
+        // Polite 1.2s spacing between Sefin Nacional emissions
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+    } finally {
+      autoQueueBusyRef.current = false;
+      const remaining = getEligibleAutoInvoices(new Date()).length;
+      setAutoTransmitState(prev => ({
+        ...prev,
+        isRunning: false,
+        currentInvoiceId: null,
+        currentCustomerName: null,
+        eligibleCount: remaining,
+        lastRunAt: new Date().toLocaleTimeString('pt-BR'),
+      }));
+    }
+  };
+
+  const clearAutoTransmitFailures = () => {
+    autoFailedIdsRef.current.clear();
+    setAutoTransmitState(prev => ({
+      ...prev,
+      failedSessionCount: 0,
+      eligibleCount: getEligibleAutoInvoices(new Date()).length,
+      lastMessage: 'Lista de falhas limpa. Notas pendentes serão reavaliadas na fila.',
+    }));
+  };
+
+  // Recompute eligible count whenever sales/invoices/platforms/cutoff change
+  useEffect(() => {
+    if (!hasHydratedIdb) return;
+    const count = getEligibleAutoInvoices(new Date()).length;
+    setAutoTransmitState(prev => (prev.eligibleCount === count ? prev : { ...prev, eligibleCount: count }));
+  }, [hasHydratedIdb, sales, invoices, platforms, company.autoTransmitStartDate, company.autoTransmitEnabled]);
+
+  // Automatic queue runner while app is open
+  useEffect(() => {
+    if (!hasHydratedIdb || !company.autoTransmitEnabled || !hasLoadedCert) return;
+
+    // Kick off quickly after opening or receiving new sales
+    const immediateTimer = setTimeout(() => {
+      void runAutoTransmitNow();
+    }, 1500);
+
+    // Re-check every 30s (catches warranty expirations & new webhooks)
+    const interval = setInterval(() => {
+      void runAutoTransmitNow();
+    }, 30000);
+
+    return () => {
+      clearTimeout(immediateTimer);
+      clearInterval(interval);
+    };
+  }, [
+    hasHydratedIdb,
+    company.autoTransmitEnabled,
+    company.autoTransmitStartDate,
+    company.fiscalEnvironment,
+    hasLoadedCert,
+    sales.length,
+    invoices.length,
+    platforms,
+  ]);
+
+  // Periodic background Kiwify sync (last 14 days every 5 minutes) when auto-transmit is active
+  useEffect(() => {
+    if (!hasHydratedIdb || !company.autoTransmitEnabled || !hasKiwifySecret) return;
+
+    const runIncrementalSync = () => {
+      const now = new Date();
+      const start = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      const startIso = getLocalIsoDay(start);
+      const endIso = getLocalIsoDay(now);
+      void syncKiwifySales({ startDate: startIso, endDate: endIso });
+    };
+
+    const interval = setInterval(runIncrementalSync, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [hasHydratedIdb, company.autoTransmitEnabled, hasKiwifySecret]);
 
   const closeMonth = (year: number, month: number) => {
     const now = new Date();
@@ -1458,6 +1791,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         kiwifySecretValue: kiwifySecretMem,
         kiwifySyncError,
         setKiwifySecretMem,
+        autoTransmitState,
+        runAutoTransmitNow,
+        clearAutoTransmitFailures,
         updateCompany,
         updatePlatform,
         emitInvoice,
