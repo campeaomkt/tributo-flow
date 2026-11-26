@@ -58,6 +58,8 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [accountantEmail, setAccountantEmail] = useState(company.accountantEmail);
   const [municipalProvider, setMunicipalProvider] = useState<MunicipalProvider>(company.municipalProvider || 'PADRAO_NACIONAL');
   const [fiscalEnvironment, setFiscalEnvironment] = useState<FiscalEnvironment>(company.fiscalEnvironment || 'HOMOLOGACAO');
+  const [dpsSeries, setDpsSeries] = useState(company.dpsSeries || '2');
+  const [nextDpsNumber, setNextDpsNumber] = useState(String(company.nextDpsNumber || 1));
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
@@ -242,6 +244,8 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
       accountantEmail,
       municipalProvider,
       fiscalEnvironment,
+      dpsSeries: dpsSeries.replace(/\D/g, '') || '2',
+      nextDpsNumber: Math.max(1, parseInt(nextDpsNumber.replace(/\D/g, ''), 10) || 1),
     });
 
     setSavedSuccess(true);
@@ -689,6 +693,41 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
               {fiscalEnvironment === 'HOMOLOGACAO'
                 ? 'Modo seguro ativo: valida certificado, XML e regras na Receita sem gerar imposto.'
                 : 'Atenção: em Produção, cada nota autorizada tem validade fiscal imediata.'}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2 border-t border-slate-100">
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              Série da DPS (Exclusiva do TributoFlow)
+            </label>
+            <input
+              type="text"
+              value={dpsSeries}
+              onChange={e => setDpsSeries(e.target.value.replace(/\D/g, '').slice(0, 5))}
+              placeholder="Ex: 2"
+              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
+            />
+            <span className="text-[10px] text-slate-500 mt-1 block">
+              Use <strong>Série 2</strong> para não colidir (erro E0014) com notas já emitidas na Série 1 em outro emissor (como Spedy).
+            </span>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              Próximo Número da DPS
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={nextDpsNumber}
+              onChange={e => setNextDpsNumber(e.target.value)}
+              placeholder="Ex: 1"
+              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
+            />
+            <span className="text-[10px] text-slate-500 mt-1 block">
+              Avança automaticamente (+1) a cada NFS-e autorizada pela Sefin Nacional.
             </span>
           </div>
         </div>

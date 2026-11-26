@@ -166,6 +166,8 @@ export interface CompanySettings {
   municipalProvider?: MunicipalProvider;
   fiscalEnvironment?: FiscalEnvironment;
   municipalWsUrl?: string;
+  dpsSeries?: string; // Série exclusiva do TributoFlow (padrão "2" para não colidir com Série 1 de outros emissores)
+  nextDpsNumber?: number; // Próximo número sequencial de DPS a ser transmitido
   taxRegime: TaxRegime;
   simplesAnexo: 'ANEXO_I' | 'ANEXO_III' | 'ANEXO_V';
   fatorRActive: boolean;

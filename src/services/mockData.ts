@@ -14,6 +14,8 @@ export const initialCompanySettings: CompanySettings = {
   mobile: '(69) 99265-3785',
   municipalProvider: 'PADRAO_NACIONAL',
   fiscalEnvironment: 'HOMOLOGACAO',
+  dpsSeries: '2',
+  nextDpsNumber: 1,
   taxRegime: 'SIMPLES_NACIONAL',
   simplesAnexo: 'ANEXO_III',
   fatorRActive: false,

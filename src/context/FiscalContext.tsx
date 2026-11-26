@@ -147,6 +147,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ...initialCompanySettings,
           ...parsed,
           fatorRActive: sanitizedFatorR,
+          dpsSeries: parsed.dpsSeries || '2',
+          nextDpsNumber: Math.max(1, Number(parsed.nextDpsNumber) || 1),
           municipalRegistration: parsed.municipalRegistration || '1618',
           certificatePassword: undefined, // Never hydrate secret from localStorage
         };
@@ -254,10 +256,22 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
 
   const [currentView, setCurrentView] = useState<string>('dashboard');
-  const [dateFilter, setDateFilter] = useState<DateFilter>({
-    start: '2026-11-01',
-    end: '2026-11-30',
-    label: 'Novembro / 2026',
+  const [dateFilter, setDateFilter] = useState<DateFilter>(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const monthIndex = now.getMonth();
+    const monthNames = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+    ];
+    const start = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+    const end = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    return {
+      start,
+      end,
+      label: `Este mês (${monthNames[monthIndex]}/${year})`,
+    };
   });
 
   const [selectedInvoiceForDanfe, setSelectedInvoiceForDanfe] = useState<FiscalInvoice | null>(null);
@@ -561,8 +575,18 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const inv = invoices.find(i => i.id === invoiceId);
     if (!inv) throw new Error('Nota fiscal não encontrada.');
 
+    // Always use TributoFlow's dedicated DPS series (default "2") and next sequential DPS number
+    // so we NEVER collide with RPS/DPS numbers already emitted on Series 1 by another issuer (e.g., Spedy)
+    const activeSeries = (company.dpsSeries || '2').replace(/\D/g, '') || '2';
+    const nextNum = Math.max(1, Number(company.nextDpsNumber) || 1);
+    const invToSend: FiscalInvoice = {
+      ...inv,
+      series: activeSeries,
+      rpsNumber: String(nextNum),
+    };
+
     const result = await transmitDirectToPrefeitura(
-      inv,
+      invToSend,
       company,
       provider,
       environment,
@@ -571,11 +595,20 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
 
     if (result.success) {
+      // Advance sequential DPS counter so the next emission uses nextNum + 1
+      setCompany(prev => ({
+        ...prev,
+        dpsSeries: activeSeries,
+        nextDpsNumber: Math.max((prev.nextDpsNumber || 1), nextNum + 1),
+      }));
+
       setInvoices(prev =>
         prev.map(i => {
           if (i.id !== invoiceId) return i;
           return {
             ...i,
+            series: invToSend.series,
+            rpsNumber: invToSend.rpsNumber,
             status: 'EMITIDA',
             issuedAt: result.authorizedAt,
             transmissionMode: 'DIRETO_PREFEITURA',
@@ -613,12 +646,26 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         })
       );
     } else {
+      // If Sefin Nacional reports E0014 (duplicate DPS series+number), auto-increment nextDpsNumber
+      const isDuplicateDps =
+        result.errors?.some(e => e.codigo === 'E0014') ||
+        (result.message || '').includes('E0014');
+      if (isDuplicateDps) {
+        setCompany(prev => ({
+          ...prev,
+          dpsSeries: activeSeries,
+          nextDpsNumber: Math.max((prev.nextDpsNumber || 1), nextNum + 1),
+        }));
+      }
+
       // Never fake EMITIDA — keep PENDENTE and store the real Sefin Nacional rejection + signed XML for inspection
       setInvoices(prev =>
         prev.map(i => {
           if (i.id !== invoiceId) return i;
           return {
             ...i,
+            series: invToSend.series,
+            rpsNumber: invToSend.rpsNumber,
             status: 'PENDENTE',
             municipalProvider: 'PADRAO_NACIONAL',
             environment: result.environment,
@@ -799,8 +846,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const newInvoice: FiscalInvoice = {
       id: invId,
       number: invoiceNum,
-      series: '1',
-      rpsNumber: (8501 + invoices.length).toString(),
+      series: company.dpsSeries || '2',
+      rpsNumber: String((company.nextDpsNumber || 1) + invoices.length),
       verificationCode: 'PENDENTE',
       accessKey: `352610${company.cnpj.replace(/\D/g, '')}5500100000${invoiceNum}100918231`,
       saleId: saleId,
@@ -993,8 +1040,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const newInvoice: FiscalInvoice = {
         id: invId,
         number: invoiceNum,
-        series: '1',
-        rpsNumber: (8501 + invoices.length).toString(),
+        series: company.dpsSeries || '2',
+        rpsNumber: String((company.nextDpsNumber || 1) + invoices.length),
         verificationCode: 'PENDENTE',
         accessKey: `352610${company.cnpj.replace(/\D/g, '')}5500100000${invoiceNum}100918231`,
         saleId: saleId,
@@ -1207,8 +1254,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             nextInvoices.push({
               id: invId,
               number: invoiceNum,
-              series: '1',
-              rpsNumber: (8500 + nextSeq).toString(),
+              series: company.dpsSeries || '2',
+              rpsNumber: String((company.nextDpsNumber || 1) + nextSeq - 1),
               verificationCode: 'PENDENTE',
               accessKey: '',
               saleId,
