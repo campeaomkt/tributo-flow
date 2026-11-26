@@ -361,7 +361,10 @@ function formatBrasiliaIso(date: Date = new Date()): string {
 /**
  * Builds the official Padrão Nacional DPS XML (versao 1.00) strictly following the XSD element order.
  */
-export function buildDpsXml(input: DpsInput): { dpsId: string; xml: string } {
+export function buildDpsXml(
+  input: DpsInput,
+  options?: { includeIm?: boolean }
+): { dpsId: string; xml: string } {
   const tpAmb = input.environment === 'PRODUCAO' ? '1' : '2';
   const cLocEmi = getIbgeCityCode(input.company.address?.city, input.company.address?.state);
   const cnpjPrest = digitsOnly(input.company.cnpj).padStart(14, '0').slice(-14);
@@ -395,7 +398,8 @@ export function buildDpsXml(input: DpsInput): { dpsId: string; xml: string } {
   const foneDigits = digitsOnly(input.company.mobile || input.company.phone).slice(0, 20);
   const foneTag = foneDigits.length >= 6 ? `<fone>${foneDigits}</fone>` : '';
   const emailPrest = input.company.email ? `<email>${escapeXml(input.company.email)}</email>` : '';
-  const imTag = imPrest ? `<IM>${imPrest}</IM>` : '';
+  // Sefin Nacional rule E0120: <IM> MUST be omitted when the municipality has no CNC NFS-e registration (e.g. Anitápolis/SC)
+  const imTag = options?.includeIm && imPrest ? `<IM>${imPrest}</IM>` : '';
 
   // Customer (Tomador)
   const customerDocDigits = digitsOnly(input.customer.document);
@@ -808,47 +812,67 @@ export async function transmitDpsToSefin(
     throw new Error(`O Certificado Digital A1 está expirado desde ${parsedCert.validTo.slice(0, 10)}.`);
   }
 
-  // 2. Build DPS XML
-  const { dpsId, xml: rawDpsXml } = buildDpsXml({ ...input, environment: env });
+  const buildSignAndSend = async (includeIm: boolean) => {
+    const { dpsId: builtDpsId, xml: rawDpsXml } = buildDpsXml(
+      { ...input, environment: env },
+      { includeIm }
+    );
+    const signedXml = signXmlEnveloped(
+      rawDpsXml,
+      'infDPS',
+      'DPS',
+      parsedCert.privateKeyPem,
+      parsedCert.certPem
+    );
+    const gzipped = zlib.gzipSync(Buffer.from(signedXml, 'utf8'), { level: 9 });
+    const b64 = gzipped.toString('base64');
+    const payload = JSON.stringify({ dpsXmlGZipB64: b64 });
+    const resp = await mtlsRequest({
+      hostname: hostCfg.sefin,
+      path: endpointPath,
+      method: 'POST',
+      certPem: parsedCert.certPem,
+      privateKeyPem: parsedCert.privateKeyPem,
+      caCertsPem: parsedCert.caCertsPem,
+      rootCertsPem: parsedCert.rootCertsPem,
+      rawPfxBuffer: parsedCert.rawPfxBuffer,
+      passphrase: parsedCert.passphrase,
+      body: payload,
+      preAuthPath: '/SefinNacional/nfse/00000000000000000000000000000000000000000000000000',
+    });
+    const rawResp = resp.bodyBuffer.toString('utf8');
+    let json: any = null;
+    try {
+      json = JSON.parse(rawResp);
+    } catch {
+      // Non-JSON response
+    }
+    return {
+      dpsId: builtDpsId,
+      signedDpsXml: signedXml,
+      dpsXmlGZipB64: b64,
+      response: resp,
+      rawResponse: rawResp,
+      parsedJson: json,
+      errors: parseSefinErrors(json),
+    };
+  };
 
-  // 3. Sign DPS XML with real XMLDSig RSA-SHA256
-  const signedDpsXml = signXmlEnveloped(
-    rawDpsXml,
-    'infDPS',
-    'DPS',
-    parsedCert.privateKeyPem,
-    parsedCert.certPem
+  // 2–5. Send without <IM> first (fixes E0120 for municipalities without CNC registration like Anitápolis/SC).
+  // If another municipality ever explicitly demands <IM> (e.g. E0119/E0121), automatically retry with <IM>.
+  let attempt = await buildSignAndSend(false);
+  const hasImNumber = Boolean(digitsOnly(input.company.municipalRegistration));
+  const requiresIm = attempt.errors.some(
+    e =>
+      e.codigo === 'E0119' ||
+      e.codigo === 'E0121' ||
+      /inscri[cç][aã]o municipal.*obrigat|im.*deve ser informad/i.test(e.descricao || '')
   );
-
-  // 4. Compress with GZip + Base64
-  const gzipped = zlib.gzipSync(Buffer.from(signedDpsXml, 'utf8'), { level: 9 });
-  const dpsXmlGZipB64 = gzipped.toString('base64');
-
-  // 5. Transmit via mTLS POST to Sefin Nacional (with zero-body GET pre-auth for IIS TLS 1.2 renegotiation)
-  const payload = JSON.stringify({ dpsXmlGZipB64 });
-  const response = await mtlsRequest({
-    hostname: hostCfg.sefin,
-    path: endpointPath,
-    method: 'POST',
-    certPem: parsedCert.certPem,
-    privateKeyPem: parsedCert.privateKeyPem,
-    caCertsPem: parsedCert.caCertsPem,
-    rootCertsPem: parsedCert.rootCertsPem,
-    rawPfxBuffer: parsedCert.rawPfxBuffer,
-    passphrase: parsedCert.passphrase,
-    body: payload,
-    preAuthPath: '/SefinNacional/nfse/00000000000000000000000000000000000000000000000000',
-  });
-
-  const rawResponse = response.bodyBuffer.toString('utf8');
-  let parsedJson: any = null;
-  try {
-    parsedJson = JSON.parse(rawResponse);
-  } catch {
-    // Non-JSON response (e.g. IIS 403 or gateway error page)
+  if (hasImNumber && requiresIm) {
+    attempt = await buildSignAndSend(true);
   }
 
-  const errors = parseSefinErrors(parsedJson);
+  const { dpsId, signedDpsXml, dpsXmlGZipB64, response, rawResponse, parsedJson, errors } = attempt;
   const nfseXmlB64 = parsedJson?.nfseXmlGZipB64 || parsedJson?.NfseXmlGZipB64 || undefined;
   const nfseXml = tryGunzipBase64(nfseXmlB64);
   const xmlChaveMatch = nfseXml?.match(/<infNFSe[^>]*Id="NFS([A-Za-z0-9]{40,60})"/);
