@@ -23,10 +23,13 @@ import {
   downloadOfficialDanfse,
   fetchServerCertStatus,
   testSefinMtlsConnection,
+  fetchKiwifyServerStatus,
+  syncKiwifySalesFromApi,
   DirectTransmissionResult,
   ServerCertStatus,
   SefinConnectionTestResult,
 } from '../services/directTransmitter';
+import { saveVaultItem, loadVaultItem, deleteVaultItem } from '../services/localVault';
 
 interface DateFilter {
   start: string;
@@ -62,6 +65,14 @@ interface FiscalContextType {
   setInMemoryCertificate: (pfxBase64: string, password: string) => void;
   clearInMemoryCertificate: () => void;
 
+  // Real Kiwify Public API v1 sync state
+  isSyncingKiwify: boolean;
+  kiwifyServerConfigured: boolean;
+  hasKiwifySecret: boolean;
+  kiwifySecretValue: string;
+  kiwifySyncError: string | null;
+  setKiwifySecretMem: (secret: string) => void;
+
   // Actions
   updateCompany: (settings: Partial<CompanySettings>) => void;
   updatePlatform: (platformId: PlatformId, config: Partial<PlatformConfig>) => void;
@@ -87,7 +98,13 @@ interface FiscalContextType {
   }) => void;
   simulateRefund: (saleId: string) => void;
   processKiwifyWebhook: (payload: any) => void;
-  syncKiwifySales: () => number;
+  syncKiwifySales: (override?: {
+    clientId?: string;
+    clientSecret?: string;
+    accountId?: string;
+    startDate?: string;
+    endDate?: string;
+  }) => Promise<{ success: boolean; totalFetched: number; addedCount: number; error?: string }>;
   updateSaleAndInvoice: (saleId: string, updates: {
     amount?: number;
     productName?: string;
@@ -103,10 +120,10 @@ const FiscalContext = createContext<FiscalContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
   COMPANY: 'tributoflow_company_v8',
-  PLATFORMS: 'tributoflow_platforms_v7',
-  SALES: 'tributoflow_sales_v7',
-  INVOICES: 'tributoflow_invoices_v7',
-  CLOSINGS: 'tributoflow_closings_v7',
+  PLATFORMS: 'tributoflow_platforms_v8',
+  SALES: 'tributoflow_sales_v8',
+  INVOICES: 'tributoflow_invoices_v8',
+  CLOSINGS: 'tributoflow_closings_v8',
 };
 
 export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -149,7 +166,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return initialCompanySettings;
   });
 
-  // Strictly in-memory certificate credentials (never stored in localStorage)
+  // Certificate credentials persisted encrypted in browser IndexedDB vault (AES-GCM)
   const [certPfxBase64, setCertPfxBase64] = useState<string>('');
   const [certPasswordMem, setCertPasswordMem] = useState<string>('');
   const [serverCertStatus, setServerCertStatus] = useState<ServerCertStatus>({ configured: false });
@@ -164,16 +181,45 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setInMemoryCertificate = (pfxBase64: string, password: string) => {
     setCertPfxBase64(pfxBase64);
     setCertPasswordMem(password);
+    void saveVaultItem('a1_cert', JSON.stringify({ pfxBase64, password }));
   };
 
   const clearInMemoryCertificate = () => {
     setCertPfxBase64('');
     setCertPasswordMem('');
+    void deleteVaultItem('a1_cert');
+  };
+
+  // Kiwify API clientSecret persisted encrypted in browser IndexedDB vault (AES-GCM)
+  const [kiwifySecretMem, setKiwifySecretState] = useState<string>('');
+  const [kiwifyServerConfigured, setKiwifyServerConfigured] = useState<boolean>(false);
+  const [isSyncingKiwify, setIsSyncingKiwify] = useState<boolean>(false);
+  const [kiwifySyncError, setKiwifySyncError] = useState<string | null>(null);
+  const hasKiwifySecret = Boolean(kiwifySecretMem.trim() || kiwifyServerConfigured);
+
+  const setKiwifySecretMem = (secret: string) => {
+    const clean = secret.trim();
+    setKiwifySecretState(clean);
+    if (clean) {
+      void saveVaultItem('kiwify_client_secret', clean);
+    } else {
+      void deleteVaultItem('kiwify_client_secret');
+    }
   };
 
   const [platforms, setPlatforms] = useState<PlatformConfig[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.PLATFORMS);
-    return saved ? JSON.parse(saved) : initialPlatforms;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((p: PlatformConfig) => ({ ...p, clientSecret: '' }));
+        }
+      } catch {
+        // fallback
+      }
+    }
+    return initialPlatforms;
   });
 
   const [sales, setSales] = useState<Sale[]>(() => {
@@ -216,32 +262,127 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState<boolean>(false);
 
-  // Check if server-side environment certificate is configured
+  // Hydrate encrypted local vault (A1 certificate + Kiwify Client Secret) and check server env on startup
   useEffect(() => {
-    fetchServerCertStatus().then(status => {
-      setServerCertStatus(status);
-      if (status.configured) {
-        setCompany(prev => ({
-          ...prev,
-          certificateStatus: status.isExpired ? 'EXPIRED' : 'ACTIVE',
-          certificateSubject: status.subjectCN,
-          certificateIssuer: status.issuerCN,
-          certificateCnpj: status.cnpj,
-          certificateExpiryDate: status.validTo ? status.validTo.slice(0, 10) : prev.certificateExpiryDate,
-          certificateFileName: prev.certificateFileName || 'Variável de Ambiente (Servidor)',
-        }));
+    let cancelled = false;
+
+    const hydrateAll = async () => {
+      // 1. Restore A1 certificate from encrypted IndexedDB vault if saved previously
+      const savedCertRaw = await loadVaultItem('a1_cert');
+      if (!cancelled && savedCertRaw) {
+        try {
+          const parsed = JSON.parse(savedCertRaw);
+          if (parsed?.pfxBase64 && parsed?.password) {
+            setCertPfxBase64(parsed.pfxBase64);
+            setCertPasswordMem(parsed.password);
+            setCompany(prev => ({
+              ...prev,
+              certificateStatus: 'ACTIVE',
+            }));
+          }
+        } catch {
+          // ignore malformed vault record
+        }
       }
-    });
+
+      // 2. Check server-side A1 certificate env
+      const status = await fetchServerCertStatus();
+      if (!cancelled) {
+        setServerCertStatus(status);
+        if (status.configured) {
+          setCompany(prev => ({
+            ...prev,
+            certificateStatus: status.isExpired ? 'EXPIRED' : 'ACTIVE',
+            certificateSubject: status.subjectCN,
+            certificateIssuer: status.issuerCN,
+            certificateCnpj: status.cnpj,
+            certificateExpiryDate: status.validTo ? status.validTo.slice(0, 10) : prev.certificateExpiryDate,
+            certificateFileName: prev.certificateFileName || 'Variável de Ambiente (Servidor)',
+          }));
+        }
+      }
+
+      // 3. Restore Kiwify Client Secret from encrypted IndexedDB vault (or migrate from legacy v7) & auto-sync
+      const [vaultSecret, kiwifyStatus] = await Promise.all([
+        loadVaultItem('kiwify_client_secret'),
+        fetchKiwifyServerStatus(),
+      ]);
+
+      if (cancelled) return;
+
+      let effectiveSecret = vaultSecret || '';
+      let migratedClientId: string | undefined;
+      let migratedAccountId: string | undefined;
+
+      if (!effectiveSecret) {
+        try {
+          const legacyRaw = localStorage.getItem('tributoflow_platforms_v7');
+          if (legacyRaw) {
+            const legacyList = JSON.parse(legacyRaw);
+            const legacyKw = Array.isArray(legacyList)
+              ? legacyList.find((p: any) => p?.id === 'kiwify')
+              : null;
+            const rawSecret = typeof legacyKw?.clientSecret === 'string' ? legacyKw.clientSecret.trim() : '';
+            const isRealSecret = rawSecret.length > 0 && !/^[•*]+$/.test(rawSecret);
+
+            if (legacyKw?.clientId || legacyKw?.accountId) {
+              migratedClientId = legacyKw.clientId || undefined;
+              migratedAccountId = legacyKw.accountId || undefined;
+              setPlatforms(prev =>
+                prev.map(p =>
+                  p.id === 'kiwify'
+                    ? {
+                        ...p,
+                        clientId: legacyKw.clientId || p.clientId,
+                        accountId: legacyKw.accountId || p.accountId,
+                      }
+                    : p
+                )
+              );
+            }
+
+            if (isRealSecret) {
+              effectiveSecret = rawSecret;
+              await saveVaultItem('kiwify_client_secret', rawSecret);
+              // Scrub plaintext secret from legacy localStorage entry
+              const scrubbed = legacyList.map((p: any) => (p?.id === 'kiwify' ? { ...p, clientSecret: '' } : p));
+              localStorage.setItem('tributoflow_platforms_v7', JSON.stringify(scrubbed));
+            }
+          }
+        } catch {
+          // ignore malformed legacy data
+        }
+      }
+
+      setKiwifyServerConfigured(kiwifyStatus.configured);
+      if (effectiveSecret) {
+        setKiwifySecretState(effectiveSecret);
+      }
+
+      if (effectiveSecret || kiwifyStatus.configured) {
+        void syncKiwifySales({
+          clientId: migratedClientId,
+          clientSecret: effectiveSecret || undefined,
+          accountId: migratedAccountId,
+        });
+      }
+    };
+
+    void hydrateAll();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Sync to localStorage (explicitly strip certificatePassword so secrets are never written to browser storage)
+  // Sync to localStorage (explicitly strip secrets so they are never written to browser storage)
   useEffect(() => {
     const { certificatePassword: _omit, ...safeCompany } = company;
     localStorage.setItem(STORAGE_KEYS.COMPANY, JSON.stringify(safeCompany));
   }, [company]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.PLATFORMS, JSON.stringify(platforms));
+    const safePlatforms = platforms.map(({ clientSecret: _omit, ...rest }) => ({ ...rest, clientSecret: '' }));
+    localStorage.setItem(STORAGE_KEYS.PLATFORMS, JSON.stringify(safePlatforms));
   }, [platforms]);
 
   useEffect(() => {
@@ -797,32 +938,243 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const syncKiwifySales = (): number => {
-    const { sales: defaultSales, invoices: defaultInvoices } = generateInitialInvoices();
-    let addedCount = 0;
+  const syncKiwifySales = async (override?: {
+    clientId?: string;
+    clientSecret?: string;
+    accountId?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{ success: boolean; totalFetched: number; addedCount: number; error?: string }> => {
+    const kwPlatform = platforms.find(p => p.id === 'kiwify');
+    const effClientId = override?.clientId?.trim() || kwPlatform?.clientId?.trim() || '';
+    const effClientSecret = override?.clientSecret?.trim() || kiwifySecretMem.trim() || '';
+    const effAccountId = override?.accountId?.trim() || kwPlatform?.accountId?.trim() || '';
+    const effStartDate = override?.startDate?.trim() || kwPlatform?.integrationStartDate || undefined;
 
-    setSales(prev => {
-      const existingRefs = new Set(prev.map(s => s.externalSaleId));
-      const missing = defaultSales.filter(s => !existingRefs.has(s.externalSaleId));
-      addedCount = missing.length;
-      if (addedCount === 0) return prev;
-      return [...missing, ...prev];
-    });
+    if (override?.clientSecret?.trim()) {
+      setKiwifySecretMem(override.clientSecret.trim());
+    }
 
-    setInvoices(prev => {
-      const existingSaleIds = new Set(prev.map(i => i.saleId));
-      const missing = defaultInvoices.filter(i => !existingSaleIds.has(i.saleId));
-      if (missing.length === 0) return prev;
-      return [...missing, ...prev];
-    });
+    setIsSyncingKiwify(true);
+    setKiwifySyncError(null);
 
-    updatePlatform('kiwify', {
-      enabled: true,
-      totalSalesProcessed: Math.max(1, sales.length),
-      lastSync: new Date().toLocaleString('pt-BR'),
-    });
+    try {
+      const apiRes = await syncKiwifySalesFromApi({
+        clientId: effClientId || undefined,
+        clientSecret: effClientSecret || undefined,
+        accountId: effAccountId || undefined,
+        startDate: effStartDate,
+        endDate: override?.endDate,
+      });
 
-    return addedCount;
+      if (!apiRes.success) {
+        const errMsg = apiRes.error || 'Não foi possível sincronizar as vendas reais da Kiwify.';
+        setKiwifySyncError(errMsg);
+        return { success: false, totalFetched: 0, addedCount: 0, error: errMsg };
+      }
+
+      const warrantyDays = kwPlatform?.warrantyDays ?? 7;
+      let addedCount = 0;
+
+      // Merge real Kiwify sales without overwriting already-emitted invoices
+      const realSalesList = apiRes.sales;
+
+      setSales(prevSales => {
+        const existingMap = new Map<string, Sale>();
+        prevSales.forEach(s => existingMap.set(s.externalSaleId.toUpperCase(), s));
+
+        const nextSales: Sale[] = [];
+        const seenRefs = new Set<string>();
+
+        for (const item of realSalesList) {
+          const refKey = item.reference.toUpperCase();
+          seenRefs.add(refKey);
+          const existing = existingMap.get(refKey);
+
+          const baseDate = new Date(item.paidAt.replace(' ', 'T'));
+          const warrantyDt = Number.isNaN(baseDate.getTime()) ? new Date() : new Date(baseDate.getTime());
+          warrantyDt.setDate(warrantyDt.getDate() + warrantyDays);
+          const formattedWarranty = `${warrantyDt.getFullYear()}-${String(warrantyDt.getMonth() + 1).padStart(2, '0')}-${String(warrantyDt.getDate()).padStart(2, '0')} 23:59:59`;
+
+          const mappedStatus: Sale['status'] =
+            item.status === 'refunded' || item.status === 'chargedback'
+              ? 'refunded'
+              : item.status === 'approved'
+              ? 'approved'
+              : 'pending';
+
+          if (existing) {
+            nextSales.push({
+              ...existing,
+              productName: item.productName,
+              productId: item.productId,
+              amount: item.amount,
+              paymentMethod: item.paymentMethod,
+              installments: item.installments,
+              status: mappedStatus,
+              createdAt: item.createdAt,
+              paidAt: item.paidAt,
+              customer: {
+                ...existing.customer,
+                name: item.customer.name,
+                document: item.customer.document,
+                email: item.customer.email,
+                phone: item.customer.phone,
+                city: item.customer.city || existing.customer.city,
+                state: item.customer.state || existing.customer.state,
+              },
+            });
+          } else {
+            addedCount += 1;
+            const saleId = `sale_kw_${item.externalId || item.reference}`;
+            const invId = `inv_kw_${item.externalId || item.reference}`;
+            nextSales.push({
+              id: saleId,
+              externalSaleId: item.reference,
+              platform: 'kiwify',
+              productName: item.productName,
+              productId: item.productId,
+              amount: item.amount,
+              paymentMethod: item.paymentMethod,
+              installments: item.installments,
+              status: mappedStatus,
+              createdAt: item.createdAt,
+              paidAt: item.paidAt,
+              warrantyExpiresAt: formattedWarranty,
+              customer: {
+                id: item.customer.id,
+                name: item.customer.name,
+                document: item.customer.document,
+                email: item.customer.email,
+                phone: item.customer.phone,
+                city: item.customer.city || 'Não informado',
+                state: item.customer.state || '',
+              },
+              invoiceId: invId,
+              invoiceStatus: mappedStatus === 'refunded' ? 'CANCELADA' : 'PENDENTE',
+            });
+          }
+        }
+
+        // Preserve any non-Kiwify sales or manually added records not in this date range
+        for (const old of prevSales) {
+          if (!seenRefs.has(old.externalSaleId.toUpperCase())) {
+            nextSales.push(old);
+          }
+        }
+
+        return nextSales.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      });
+
+      setInvoices(prevInvoices => {
+        const existingBySaleId = new Map<string, FiscalInvoice>();
+        prevInvoices.forEach(inv => existingBySaleId.set(inv.saleId, inv));
+
+        const nextInvoices: FiscalInvoice[] = [];
+        const seenSaleIds = new Set<string>();
+        let nextSeq = prevInvoices.length;
+
+        for (const item of realSalesList) {
+          const saleId = `sale_kw_${item.externalId || item.reference}`;
+          const invId = `inv_kw_${item.externalId || item.reference}`;
+          seenSaleIds.add(saleId);
+          const existing = existingBySaleId.get(saleId);
+          const taxes = calculateTaxes(item.amount, company);
+
+          if (existing) {
+            // Never overwrite already EMITIDA / Sefin-authorized fields
+            if (existing.status === 'EMITIDA' || existing.chaveAcessoNacional) {
+              nextInvoices.push(existing);
+            } else {
+              nextInvoices.push({
+                ...existing,
+                productName: item.productName,
+                description: `Licenciamento e acesso a plataforma de conteúdo digital: ${item.productName}`,
+                grossAmount: item.amount,
+                netAmount: Number((item.amount - taxes.totalTax).toFixed(2)),
+                taxes,
+                status:
+                  item.status === 'refunded' || item.status === 'chargedback' ? 'CANCELADA' : existing.status,
+                customer: {
+                  ...existing.customer,
+                  name: item.customer.name,
+                  document: item.customer.document,
+                  email: item.customer.email,
+                  phone: item.customer.phone,
+                  city: item.customer.city || existing.customer.city,
+                  state: item.customer.state || existing.customer.state,
+                },
+              });
+            }
+          } else {
+            nextSeq += 1;
+            const invoiceNum = (20260000000 + nextSeq).toString();
+            const baseDate = new Date(item.paidAt.replace(' ', 'T'));
+            const warrantyDt = Number.isNaN(baseDate.getTime()) ? new Date() : new Date(baseDate.getTime());
+            warrantyDt.setDate(warrantyDt.getDate() + warrantyDays);
+            const formattedWarranty = `${warrantyDt.getFullYear()}-${String(warrantyDt.getMonth() + 1).padStart(2, '0')}-${String(warrantyDt.getDate()).padStart(2, '0')} 23:59:59`;
+
+            nextInvoices.push({
+              id: invId,
+              number: invoiceNum,
+              series: '1',
+              rpsNumber: (8500 + nextSeq).toString(),
+              verificationCode: 'PENDENTE',
+              accessKey: '',
+              saleId,
+              platform: 'kiwify',
+              model: 'NFS-e',
+              status: item.status === 'refunded' || item.status === 'chargedback' ? 'CANCELADA' : 'PENDENTE',
+              issuedAt: item.paidAt,
+              scheduledFor: `${formattedWarranty} (Aguardando Transmissão Sefin)`,
+              customer: {
+                id: item.customer.id,
+                name: item.customer.name,
+                document: item.customer.document,
+                email: item.customer.email,
+                phone: item.customer.phone,
+                city: item.customer.city || 'Não informado',
+                state: item.customer.state || '',
+              },
+              productName: item.productName,
+              description: `Licenciamento e acesso a plataforma de conteúdo digital: ${item.productName}`,
+              serviceCode: company.serviceCode || '010701',
+              cnae: company.cnaePrincipal,
+              grossAmount: item.amount,
+              netAmount: Number((item.amount - taxes.totalTax).toFixed(2)),
+              taxes,
+              emailSent: false,
+            });
+          }
+        }
+
+        for (const old of prevInvoices) {
+          if (!seenSaleIds.has(old.saleId)) {
+            nextInvoices.push(old);
+          }
+        }
+
+        return nextInvoices.sort((a, b) => b.issuedAt.localeCompare(a.issuedAt));
+      });
+
+      updatePlatform('kiwify', {
+        enabled: true,
+        totalSalesProcessed: realSalesList.length,
+        lastSync: new Date().toLocaleString('pt-BR'),
+      });
+
+      return {
+        success: true,
+        totalFetched: realSalesList.length,
+        addedCount,
+      };
+    } catch (err: any) {
+      const errMsg = err?.message || 'Erro inesperado ao sincronizar com a API da Kiwify.';
+      setKiwifySyncError(errMsg);
+      return { success: false, totalFetched: 0, addedCount: 0, error: errMsg };
+    } finally {
+      setIsSyncingKiwify(false);
+    }
   };
 
   const updateSaleAndInvoice = (saleId: string, updates: {
@@ -932,6 +1284,12 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         serverCertStatus,
         setInMemoryCertificate,
         clearInMemoryCertificate,
+        isSyncingKiwify,
+        kiwifyServerConfigured,
+        hasKiwifySecret,
+        kiwifySecretValue: kiwifySecretMem,
+        kiwifySyncError,
+        setKiwifySecretMem,
         updateCompany,
         updatePlatform,
         emitInvoice,

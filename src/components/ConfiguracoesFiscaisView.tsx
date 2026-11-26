@@ -712,7 +712,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-bold text-slate-900 text-sm">Certificado Digital e-CNPJ A1 Validado</p>
                     <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
-                      {certSource === 'server_env' ? 'Configurado no Servidor (.env)' : 'Ativo na Sessão Segura (Memória)'}
+                      {certSource === 'server_env' ? 'Configurado no Servidor (.env)' : 'Salvo no Cofre Criptografado'}
                     </span>
                   </div>
                   <p className="text-slate-700 font-medium mt-0.5">
@@ -744,7 +744,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
               <div className="flex items-center gap-2 text-slate-600">
                 <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>
-                  Chave privada e senha protegidas <strong>apenas em memória segura</strong> (nunca gravadas no navegador/localStorage).
+                  Certificado e senha salvos com <strong>criptografia AES-GCM no navegador</strong> — continuam ativos mesmo após fechar o app.
                 </span>
               </div>
               <button
@@ -856,7 +856,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
               <div>
                 <p className="font-bold text-slate-900 text-sm">Carregar Certificado Digital A1 (.pfx / .p12)</p>
                 <p className="text-slate-600 leading-relaxed mt-0.5">
-                  Selecione o arquivo <strong>.pfx ou .p12</strong> do seu e-CNPJ e informe a <strong>senha</strong>. O servidor valida a assinatura ICP-Brasil e a data de validade na hora. Por segurança, o arquivo e a senha ficam apenas em memória na sessão (ou configurados via variáveis <code>NFSE_PFX_BASE64</code> / <code>NFSE_CERT_PASSWORD</code> no servidor).
+                  Selecione o arquivo <strong>.pfx ou .p12</strong> do seu e-CNPJ e informe a <strong>senha</strong>. Após validado, o certificado e a senha ficam salvos automaticamente no <strong>cofre criptografado (AES-GCM)</strong> do seu navegador para você não precisar enviar de novo ao fechar e abrir o app.
                 </p>
               </div>
             </div>

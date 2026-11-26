@@ -52,7 +52,7 @@ export const initialPlatforms: PlatformConfig[] = [
     sendEmailToCustomer: true,
     cancelOnRefund: true,
     clientId: 'cb4871c1-cdc7-4b85-a27c-4e89ef5557fb',
-    clientSecret: '••••••••••••••••••••••••••••••••••••••••',
+    clientSecret: '',
     accountId: '5yDbjPIo1GqwUlO',
     includeInterestInValue: true,
     notificationEmail: 'campeao.mkt.user@gmail.com',
@@ -60,8 +60,8 @@ export const initialPlatforms: PlatformConfig[] = [
     warrantyDays: 7,
     webhookUrl: 'https://tributo-flow.vercel.app/api/webhooks/kiwify',
     webhookSecret: '',
-    totalSalesProcessed: 1,
-    lastSync: '10/11/2026 14:50',
+    totalSalesProcessed: 0,
+    lastSync: undefined,
   },
   {
     id: 'hotmart',
@@ -191,119 +191,12 @@ export const initialPlatforms: PlatformConfig[] = [
   },
 ];
 
-export const initialProducts: Product[] = [
-  {
-    id: 'prod_aevo_pro',
-    name: 'Pacote de Timbres - Aevo Pro 2.0',
-    platform: 'kiwify',
-    externalId: 'fd133700-6286-11f0-a9f0-d76d4973f1b3',
-    price: 37.90,
-    serviceCode: '01.07',
-    cnae: '6202-3/00',
-    salesCount: 1,
-    totalRevenue: 37.90,
-  },
-];
+export const initialProducts: Product[] = [];
 
-// Returns strictly real sales confirmed by user logs
-// Non-emitted sales are marked as PENDENTE (awaiting real transmission to the City Hall)
+// ZERO fake data: sales & invoices are populated exclusively from real Kiwify Public API sync / live webhooks.
 export function generateInitialInvoices(): { sales: Sale[]; invoices: FiscalInvoice[] } {
-  const saleId = 'sale_n2rk3oi';
-  const invId = 'inv_n2rk3oi';
-  const date = '2026-11-10 14:50:00';
-  const warrantyDate = '2026-11-17 23:59:59';
-
-  const realSale: Sale = {
-    id: saleId,
-    externalSaleId: 'N2RK3OI',
-    platform: 'kiwify',
-    productName: 'Pacote de Timbres - Aevo Pro 2.0',
-    productId: 'fd133700-6286-11f0-a9f0-d76d4973f1b3',
-    amount: 37.90,
-    paymentMethod: 'PIX',
-    installments: 1,
-    status: 'approved',
-    createdAt: date,
-    paidAt: date,
-    warrantyExpiresAt: warrantyDate,
-    customer: {
-      id: 'cust_n2rk3oi',
-      name: 'Jaide menezes rodrigues',
-      document: '199.112.178-41',
-      email: 'jaidemenezes@hotmail.com',
-      city: 'São Paulo',
-      state: 'SP',
-    },
-    invoiceId: invId,
-    invoiceStatus: 'PENDENTE',
-  };
-
-  const pendingInvoice: FiscalInvoice = {
-    id: invId,
-    number: '20260000001',
-    series: '1',
-    rpsNumber: '8501',
-    verificationCode: 'PENDENTE',
-    accessKey: '35261040731222000107550010000020260000001100918231',
-    saleId: saleId,
-    platform: 'kiwify',
-    model: 'NFS-e',
-    status: 'PENDENTE',
-    issuedAt: date,
-    scheduledFor: '2026-11-17 23:59:59 (Fim da Garantia)',
-    customer: realSale.customer,
-    productName: realSale.productName,
-    description: 'Licenciamento e acesso a plataforma de conteúdo digital: Pacote de Timbres - Aevo Pro 2.0',
-    serviceCode: '01.07',
-    cnae: '6202-3/00',
-    grossAmount: 37.90,
-    netAmount: 35.63,
-    taxes: {
-      regime: 'SIMPLES_NACIONAL',
-      effectiveRate: 6.0,
-      totalTax: 2.27,
-      issRate: 2.0,
-      issAmount: 0.76,
-      pisRate: 0.35,
-      pisAmount: 0.13,
-      cofinsRate: 1.6,
-      cofinsAmount: 0.61,
-      irpjRate: 0.27,
-      irpjAmount: 0.10,
-      csllRate: 0.27,
-      csllAmount: 0.10,
-    },
-    emailSent: false,
-  };
-
-  return { sales: [realSale], invoices: [pendingInvoice] };
+  return { sales: [], invoices: [] };
 }
 
-export const initialMonthlyClosings: MonthlyClosing[] = [
-  {
-    year: 2026,
-    month: 11,
-    monthName: 'Novembro / 2026',
-    grossRevenue: 37.90,
-    netRevenue: 35.63,
-    invoicesCount: 0, // 0 emitted by the City Hall so far
-    cancelledCount: 0,
-    estimatedTaxes: 2.27,
-    simplesDasEstimate: 2.27,
-    issDue: 0.76,
-    isClosed: false,
-  },
-  {
-    year: 2026,
-    month: 10,
-    monthName: 'Outubro / 2026',
-    grossRevenue: 0,
-    netRevenue: 0,
-    invoicesCount: 0,
-    cancelledCount: 0,
-    estimatedTaxes: 0,
-    simplesDasEstimate: 0,
-    issDue: 0,
-    isClosed: false,
-  },
-];
+export const initialMonthlyClosings: MonthlyClosing[] = [];
+

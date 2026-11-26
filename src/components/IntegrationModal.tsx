@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useFiscal } from '../context/FiscalContext';
 import { PlatformConfig, InvoiceModel, InvoiceTrigger } from '../types';
-import { X, Eye, EyeOff, Copy, Check, Info, ShieldCheck, Zap } from 'lucide-react';
+import { X, Eye, EyeOff, Copy, Check, Info, ShieldCheck, Zap, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 
 interface IntegrationModalProps {
   platform: PlatformConfig;
@@ -9,7 +9,15 @@ interface IntegrationModalProps {
 }
 
 export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, onClose }) => {
-  const { updatePlatform, setIsSimulatorOpen, processKiwifyWebhook, syncKiwifySales } = useFiscal();
+  const {
+    updatePlatform,
+    processKiwifyWebhook,
+    syncKiwifySales,
+    isSyncingKiwify,
+    kiwifyServerConfigured,
+    kiwifySecretValue,
+    setKiwifySecretMem,
+  } = useFiscal();
 
   const [enabled, setEnabled] = useState(platform.enabled);
   const [invoiceModel, setInvoiceModel] = useState<InvoiceModel>(platform.invoiceModel);
@@ -19,7 +27,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
 
   // Parameters
   const [clientId, setClientId] = useState(platform.clientId || '');
-  const [clientSecret, setClientSecret] = useState(platform.clientSecret || '');
+  const [clientSecret, setClientSecret] = useState(platform.id === 'kiwify' ? kiwifySecretValue : '');
   const [showSecret, setShowSecret] = useState(false);
   const [accountId, setAccountId] = useState(platform.accountId || '');
   const [includeInterest, setIncludeInterest] = useState(platform.includeInterestInValue);
@@ -31,10 +39,10 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
   const [isSaved, setIsSaved] = useState(false);
   const [isTestingEndpoint, setIsTestingEndpoint] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; status: number; message: string } | null>(null);
-  const [importedRealSale, setImportedRealSale] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [pastedJson, setPastedJson] = useState('');
   const [showPasteBox, setShowPasteBox] = useState(false);
-  const [pasteFeedback, setPasteFeedback] = useState<string | null>(null);
+  const [pasteFeedback, setPasteFeedback] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Compute live absolute webhook URL so external platforms like Kiwify can reach the applet
   const liveWebhookUrl = typeof window !== 'undefined'
@@ -78,44 +86,36 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
     }
   };
 
-  const handleImportRealSale = () => {
-    const realPayload = {
-      order_id: "3f0c384b-bb9b-4009-82f5-2e956c914396",
-      order_ref: "N2rK3oi",
-      order_status: "paid",
-      product_type: "club",
-      payment_method: "pix",
-      store_id: "5yDbjPIo1GqwUlO",
-      sale_type: "producer",
-      created_at: "2026-11-10 14:49",
-      updated_at: "2026-11-10 14:49",
-      approved_date: "2026-11-10 14:50",
-      webhook_event_type: "order_approved",
-      Product: {
-        product_id: "fd133700-6286-11f0-a9f0-d76d4973f1b3",
-        product_name: "Pacote de Timbres - Aevo Pro 2.0",
-        product_offer_id: "f51678f2-d7d8-458c-b344-bce0fbdc034d",
-        product_offer_name: "Aevo Pro 2.0"
-      },
-      Customer: {
-        full_name: "Jaide menezes rodrigues",
-        first_name: "Jaide",
-        email: "jaidemenezes@hotmail.com",
-        mobile: "+5512981115487",
-        CPF: "19911217841"
-      },
-      Commissions: {
-        charge_amount: 3790,
-        product_base_price: 3790,
-        product_base_price_currency: "BRL",
-        kiwify_fee: 590
-      }
-    };
-
-    processKiwifyWebhook(realPayload);
-    setEnabled(true);
-    setImportedRealSale(true);
-    setTimeout(() => setImportedRealSale(false), 3000);
+  const handleRealKiwifySync = async () => {
+    setSyncResult(null);
+    if (clientSecret.trim()) {
+      setKiwifySecretMem(clientSecret.trim());
+    }
+    updatePlatform(platform.id, {
+      enabled: true,
+      clientId,
+      accountId,
+      integrationStartDate: startDate,
+      warrantyDays: Number(warrantyDays),
+    });
+    const res = await syncKiwifySales({
+      clientId: clientId.trim() || undefined,
+      clientSecret: clientSecret.trim() || undefined,
+      accountId: accountId.trim() || undefined,
+      startDate,
+    });
+    if (res.success) {
+      setEnabled(true);
+      setSyncResult({
+        ok: true,
+        message: `Conexão real com a API da Kiwify concluída! ${res.totalFetched} vendas reais encontradas desde ${startDate} (${res.addedCount} novas importadas).`,
+      });
+    } else {
+      setSyncResult({
+        ok: false,
+        message: res.error || 'Falha ao consultar vendas reais na API da Kiwify.',
+      });
+    }
   };
 
   const handleCopyWebhook = () => {
@@ -124,7 +124,11 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
     setTimeout(() => setCopiedWebhook(false), 2000);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (platform.id === 'kiwify' && clientSecret.trim()) {
+      setKiwifySecretMem(clientSecret.trim());
+    }
+
     updatePlatform(platform.id, {
       enabled,
       invoiceModel,
@@ -132,13 +136,22 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
       sendEmailToCustomer: sendEmail,
       cancelOnRefund,
       clientId,
-      clientSecret,
+      clientSecret: '',
       accountId,
       includeInterestInValue: includeInterest,
       notificationEmail: email,
       integrationStartDate: startDate,
       warrantyDays: Number(warrantyDays),
     });
+
+    if (platform.id === 'kiwify' && (clientSecret.trim() || kiwifyServerConfigured)) {
+      await syncKiwifySales({
+        clientId: clientId.trim() || undefined,
+        clientSecret: clientSecret.trim() || undefined,
+        accountId: accountId.trim() || undefined,
+        startDate,
+      });
+    }
 
     setIsSaved(true);
     setTimeout(() => {
@@ -303,15 +316,26 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
 
             {/* Client Secret */}
             <div>
-              <label className="block text-slate-700 font-medium mb-1">
-                <span className="text-red-500">*</span> Client Secret
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-slate-700 font-medium">
+                  <span className="text-red-500">*</span> Client Secret
+                </label>
+                {platform.id === 'kiwify' && kiwifyServerConfigured && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    ✓ Configurado no Servidor (.env Vercel)
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <input
                   type={showSecret ? 'text' : 'password'}
                   value={clientSecret}
                   onChange={e => setClientSecret(e.target.value)}
-                  placeholder="••••••••••••••••••••••••••••••••••••••••"
+                  placeholder={
+                    platform.id === 'kiwify' && kiwifyServerConfigured
+                      ? 'Usando KIWIFY_CLIENT_SECRET da Vercel (deixe vazio ou cole para sobrescrever)'
+                      : 'Cole o Client Secret real gerado em Apps > API na Kiwify'
+                  }
                   className="w-full px-3.5 py-2 pr-10 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#2c0853] text-slate-800 font-mono text-xs"
                 />
                 <button
@@ -322,6 +346,11 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                   {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              {platform.id === 'kiwify' && (
+                <p className="text-[11px] text-emerald-700 font-medium mt-1">
+                  ✓ Fica salvo automaticamente no cofre criptografado deste navegador — você não precisa preencher de novo ao fechar e abrir o app.
+                </p>
+              )}
             </div>
 
             {/* Account ID */}
@@ -420,44 +449,65 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                 </button>
               </div>
 
-              {/* Action Buttons: Testar Webhook & Sincronizar Vendas Reais */}
+              {/* Action Buttons: Sync Real Kiwify API & Test Webhook */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleTestWebhook}
-                  disabled={isTestingEndpoint}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{isTestingEndpoint ? 'Testando Conexão...' : 'Testar Conexão do Webhook'}</span>
-                </button>
-
                 {platform.id === 'kiwify' && (
                   <>
                     <button
                       type="button"
-                      onClick={() => {
-                        syncKiwifySales();
-                        setEnabled(true);
-                        setImportedRealSale(true);
-                        setTimeout(() => setImportedRealSale(false), 3000);
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+                      onClick={handleRealKiwifySync}
+                      disabled={isSyncingKiwify}
+                      className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs disabled:opacity-60"
                     >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>{importedRealSale ? '✓ 11 Vendas Sincronizadas!' : 'Sincronizar Todas as 11 Vendas (R$ 416,90)'}</span>
+                      {isSyncingKiwify ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {isSyncingKiwify
+                          ? 'Buscando vendas reais na Kiwify...'
+                          : 'Sincronizar Vendas Reais da API Kiwify'}
+                      </span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setShowPasteBox(!showPasteBox)}
-                      className="px-3 py-1.5 rounded-lg border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 text-xs font-semibold flex items-center gap-1.5"
+                      className="px-3 py-2 rounded-lg border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 text-xs font-semibold flex items-center gap-1.5"
                     >
-                      <span>{showPasteBox ? 'Fechar Importador' : 'Colar Payload / JSON da Kiwify'}</span>
+                      <span>{showPasteBox ? 'Fechar Importador' : 'Colar JSON de Webhook'}</span>
                     </button>
                   </>
                 )}
+
+                <button
+                  type="button"
+                  onClick={handleTestWebhook}
+                  disabled={isTestingEndpoint}
+                  className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isTestingEndpoint ? 'Testando Endpoint...' : 'Testar Endpoint Webhook'}</span>
+                </button>
               </div>
+
+              {syncResult && (
+                <div
+                  className={`p-3 rounded-lg text-xs leading-relaxed border flex items-start gap-2 ${
+                    syncResult.ok
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-rose-50 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  {syncResult.ok ? (
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <span className="font-semibold">{syncResult.message}</span>
+                </div>
+              )}
 
               {/* Manual JSON Payload Importer */}
               {showPasteBox && (
@@ -475,10 +525,14 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                     placeholder='Cole aqui o JSON da requisição da Kiwify, ex: {"order": {"order_ref": "N2RK3OI", "order_status": "paid", ...}}'
                     className="w-full p-2 rounded-lg border border-purple-200 bg-white font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
                   />
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     {pasteFeedback && (
-                      <span className="text-[11px] font-semibold text-emerald-700">
-                        {pasteFeedback}
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          pasteFeedback.ok ? 'text-emerald-700' : 'text-rose-700'
+                        }`}
+                      >
+                        {pasteFeedback.message}
                       </span>
                     )}
                     <button
@@ -488,17 +542,17 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ platform, on
                           const parsed = JSON.parse(pastedJson);
                           processKiwifyWebhook(parsed);
                           setEnabled(true);
-                          setPasteFeedback('✓ Venda processada e NFS-e gerada com sucesso!');
+                          setPasteFeedback({ ok: true, message: '✓ Venda real processada e adicionada na fila fiscal!' });
                           setPastedJson('');
                           setTimeout(() => setPasteFeedback(null), 4000);
                         } catch (err: any) {
-                          alert(`JSON inválido: ${err.message}`);
+                          setPasteFeedback({ ok: false, message: `JSON inválido: ${err.message}` });
                         }
                       }}
                       disabled={!pastedJson.trim()}
                       className="px-4 py-1.5 rounded-lg bg-[#2c0853] hover:bg-[#3d0b72] text-white text-xs font-bold disabled:opacity-50 ml-auto"
                     >
-                      Processar Venda & Emitir NFS-e
+                      Processar Venda Real
                     </button>
                   </div>
                 </div>

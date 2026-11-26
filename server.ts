@@ -10,6 +10,7 @@ import {
   fetchOfficialDanfsePdf,
   testSefinConnection,
 } from './api/_lib/sefinNacional.js';
+import { fetchRealKiwifySales, hasServerKiwifyEnv } from './api/_lib/kiwifyApi.js';
 
 async function startServer() {
   const app = express();
@@ -191,6 +192,32 @@ async function startServer() {
         success: false,
         httpStatus: 0,
         message: err?.message || 'Erro ao baixar DANFSe oficial do ADN Nacional.',
+      });
+    }
+  });
+
+  // Real Kiwify Public API v1 status & sync
+  app.get('/api/kiwify/status', (_req: Request, res: Response) => {
+    return res.status(200).json({ configured: hasServerKiwifyEnv() });
+  });
+
+  app.post('/api/kiwify/sync', async (req: Request, res: Response) => {
+    try {
+      const { clientId, clientSecret, accountId, startDate, endDate, includeUnpaid } = req.body || {};
+      const result = await fetchRealKiwifySales({
+        credentials: { clientId, clientSecret, accountId },
+        startDate: typeof startDate === 'string' ? startDate : undefined,
+        endDate: typeof endDate === 'string' ? endDate : undefined,
+        includeUnpaid: Boolean(includeUnpaid),
+      });
+      return res.status(200).json(result);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        source: 'kiwify_public_api',
+        totalFetched: 0,
+        sales: [],
+        error: err?.message || 'Erro ao sincronizar vendas reais da API da Kiwify.',
       });
     }
   });

@@ -342,3 +342,84 @@ export async function testSefinMtlsConnection(params: {
   }
 }
 
+export interface RealKiwifySaleDto {
+  externalId: string;
+  reference: string;
+  status: 'approved' | 'refunded' | 'chargedback' | 'pending' | 'refused';
+  rawStatus: string;
+  productId: string;
+  productName: string;
+  amount: number;
+  netAmount: number;
+  currency: string;
+  paymentMethod: 'PIX' | 'CARTAO_CREDITO' | 'BOLETO';
+  installments: number;
+  createdAt: string;
+  paidAt: string;
+  customer: {
+    id: string;
+    name: string;
+    document: string;
+    email: string;
+    phone?: string;
+    city: string;
+    state: string;
+  };
+}
+
+export interface KiwifyApiSyncResponse {
+  success: boolean;
+  source: 'kiwify_public_api';
+  period?: { startDate: string; endDate: string };
+  totalFetched: number;
+  sales: RealKiwifySaleDto[];
+  error?: string;
+}
+
+export async function fetchKiwifyServerStatus(): Promise<{ configured: boolean }> {
+  try {
+    const res = await fetch('/api/kiwify/status');
+    const parsed = await safeParseJson<{ configured: boolean }>(res);
+    if (!res.ok || !parsed.ok || !parsed.data) return { configured: false };
+    return parsed.data;
+  } catch {
+    return { configured: false };
+  }
+}
+
+export async function syncKiwifySalesFromApi(params: {
+  clientId?: string;
+  clientSecret?: string;
+  accountId?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<KiwifyApiSyncResponse> {
+  try {
+    const res = await fetch('/api/kiwify/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const parsed = await safeParseJson<KiwifyApiSyncResponse>(res);
+    if (!parsed.ok || !parsed.data) {
+      return {
+        success: false,
+        source: 'kiwify_public_api',
+        totalFetched: 0,
+        sales: [],
+        error: `Erro HTTP ${res.status} ao consultar /api/kiwify/sync (${(parsed.rawText || 'resposta inválida').slice(0, 140)}).`,
+      };
+    }
+    return parsed.data;
+  } catch (err: any) {
+    return {
+      success: false,
+      source: 'kiwify_public_api',
+      totalFetched: 0,
+      sales: [],
+      error: err?.message || 'Falha de comunicação com o servidor ao sincronizar com a Kiwify.',
+    };
+  }
+}
+
+
