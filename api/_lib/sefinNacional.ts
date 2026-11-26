@@ -1137,17 +1137,35 @@ export async function fetchOfficialDanfsePdf(params: {
   const creds = resolveCertCredentials(params.pfxBase64, params.certPassword);
   const parsedCert = parsePfxCertificate(creds.pfxBase64, creds.certPassword);
 
-  const response = await mtlsRequest({
+  let response = await mtlsRequest({
     hostname: hostCfg.adn,
     path: `/danfse/${cleanChave}`,
     method: 'GET',
     certPem: parsedCert.certPem,
     privateKeyPem: parsedCert.privateKeyPem,
     caCertsPem: parsedCert.caCertsPem,
+    rootCertsPem: parsedCert.rootCertsPem,
     rawPfxBuffer: parsedCert.rawPfxBuffer,
     passphrase: parsedCert.passphrase,
     accept: 'application/pdf',
   });
+
+  // Brief retry once if SERPRO's ADN PDF worker returns transient 502/503/504
+  if ([502, 503, 504].includes(response.statusCode)) {
+    await new Promise(resolve => setTimeout(resolve, 450));
+    response = await mtlsRequest({
+      hostname: hostCfg.adn,
+      path: `/danfse/${cleanChave}`,
+      method: 'GET',
+      certPem: parsedCert.certPem,
+      privateKeyPem: parsedCert.privateKeyPem,
+      caCertsPem: parsedCert.caCertsPem,
+      rootCertsPem: parsedCert.rootCertsPem,
+      rawPfxBuffer: parsedCert.rawPfxBuffer,
+      passphrase: parsedCert.passphrase,
+      accept: 'application/pdf',
+    });
+  }
 
   if (response.statusCode >= 200 && response.statusCode < 300 && response.bodyBuffer.length > 100) {
     return {
