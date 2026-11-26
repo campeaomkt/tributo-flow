@@ -60,7 +60,7 @@ export function generateLocalDanfsePdf(invoice: FiscalInvoice, company: CompanyS
   const xTribNac = extractXmlTag(xml, 'xTribNac');
   const dhProc = extractXmlTag(xml, 'dhProc') || invoice.authorizedAt || invoice.issuedAt;
   const dCompet = extractXmlTag(xml, 'dCompet') || (invoice.issuedAt || '').slice(0, 10);
-  const cTribNac = extractXmlTag(xml, 'cTribNac') || invoice.serviceCode || company.serviceCode || '010701';
+  const cTribNac = extractXmlTag(xml, 'cTribNac') || invoice.serviceCode || company.serviceCode || '080201';
   const xDescServ = extractXmlTag(xml, 'xDescServ') || invoice.description || invoice.productName;
   const vServXml = extractXmlTag(xml, 'vServ');
   const vLiqXml = extractXmlTag(xml, 'vLiq');
@@ -261,7 +261,7 @@ export function generateLocalDanfsePdf(invoice: FiscalInvoice, company: CompanyS
   doc.setFontSize(8.5);
   doc.setTextColor(15, 23, 42);
   doc.text(cTribNac, margin + 3, y + 8.8);
-  doc.text(invoice.cnae || company.cnaePrincipal || '6202-3/00', margin + 90, y + 8.8);
+  doc.text(invoice.cnae || company.cnaePrincipal || '8599-6/04', margin + 90, y + 8.8);
   doc.text(`${xLocPrestacao} / ${company.address?.state || 'SC'}`, margin + 132, y + 8.8);
 
   let innerY = y + 13.5;

@@ -182,11 +182,11 @@ export interface CompanySettings {
   rbt12: number; // Receita Bruta Total 12 meses
   payroll12: number; // Folha de pagamento 12 meses
   defaultIssRate: number; // e.g. 2.0%
-  serviceCode: string; // "010701" (cTribNac 6 dígitos)
-  cnaePrincipal: string; // "6202-3/00"
+  serviceCode: string; // "080201" (cTribNac 6 dígitos — LC 116 item 8.02 Cursos/Treinamentos)
+  cnaePrincipal: string; // "8599-6/04" (Treinamento em desenvolvimento profissional e cursos)
   // Reforma Tributária (IBS / CBS — NFS-e Nacional v1.01)
   reformaTributariaEnabled?: boolean; // Enviar grupo <IBSCBS> + <cNBS> na DPS v1.01
-  cNbs?: string; // Código NBS 9 dígitos (ex: "115013000" para cTribNac 010701)
+  cNbs?: string; // Código NBS 9 dígitos (ex: "122051900" = 1.2205.19.00 para cTribNac 080201)
   ibsCbsFinNfse?: string; // Finalidade da NFS-e ("0" = Regular)
   ibsCbsIndFinal?: '0' | '1'; // Consumidor final ("1" = Sim, "0" = Não)
   ibsCbsIndOp?: string; // Código Indicador da Operação - 6 dígitos (ex: "100301")

@@ -49,8 +49,8 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [rbt12, setRbt12] = useState(company.rbt12.toString());
   const [payroll12, setPayroll12] = useState(company.payroll12.toString());
   const [defaultIssRate, setDefaultIssRate] = useState(company.defaultIssRate.toString());
-  const [serviceCode, setServiceCode] = useState(company.serviceCode || '010701');
-  const [cnaePrincipal, setCnaePrincipal] = useState(company.cnaePrincipal);
+  const [serviceCode, setServiceCode] = useState(company.serviceCode || '080201');
+  const [cnaePrincipal, setCnaePrincipal] = useState(company.cnaePrincipal || '8599-6/04');
   const [corporateName, setCorporateName] = useState(company.corporateName);
   const [cnpj, setCnpj] = useState(company.cnpj);
   const [municipalRegistration, setMunicipalRegistration] = useState(company.municipalRegistration || '1618');
@@ -65,7 +65,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [reformaTributariaEnabled, setReformaTributariaEnabled] = useState(
     company.reformaTributariaEnabled !== false
   );
-  const [cNbs, setCNbs] = useState(company.cNbs || '115013000');
+  const [cNbs, setCNbs] = useState(company.cNbs || '122051900');
   const [ibsCbsFinNfse, setIbsCbsFinNfse] = useState(company.ibsCbsFinNfse || '0');
   const [ibsCbsIndFinal, setIbsCbsIndFinal] = useState<'0' | '1'>(company.ibsCbsIndFinal || '1');
   const [ibsCbsIndOp, setIbsCbsIndOp] = useState(company.ibsCbsIndOp || '100301');
@@ -259,7 +259,7 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
       dpsSeries: dpsSeries.replace(/\D/g, '') || '2',
       nextDpsNumber: Math.max(1, parseInt(nextDpsNumber.replace(/\D/g, ''), 10) || 1),
       reformaTributariaEnabled,
-      cNbs: cNbs.replace(/\D/g, '').slice(0, 9) || '115013000',
+      cNbs: cNbs.replace(/\D/g, '').slice(0, 9) || '122051900',
       ibsCbsFinNfse: ibsCbsFinNfse.replace(/\D/g, '').slice(0, 1) || '0',
       ibsCbsIndFinal,
       ibsCbsIndOp: ibsCbsIndOp.replace(/\D/g, '').slice(0, 6) || '100301',
@@ -614,10 +614,10 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
               value={serviceCode}
               onChange={e => setServiceCode(e.target.value)}
               className="w-full px-3.5 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
-              placeholder="Ex: 010701"
+              placeholder="Ex: 080201"
             />
             <span className="text-[10px] text-slate-400 mt-1 block">
-              010701 = Item 01.07 (Suporte técnico, informática e conteúdo digital)
+              080201 = Item 8.02 (Instrução, treinamento, cursos e conteúdo educacional)
             </span>
           </div>
 
@@ -630,10 +630,10 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
               value={cnaePrincipal}
               onChange={e => setCnaePrincipal(e.target.value)}
               className="w-full px-3.5 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
-              placeholder="Ex: 6202-3/00"
+              placeholder="Ex: 8599-6/04"
             />
             <span className="text-[10px] text-slate-400 mt-1 block">
-              Desenvolvimento e licenciamento de softwares e infoprodutos
+              Treinamento em desenvolvimento profissional e cursos livres
             </span>
           </div>
 
@@ -714,11 +714,11 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
                   type="text"
                   value={cNbs}
                   onChange={e => setCNbs(e.target.value.replace(/\D/g, '').slice(0, 9))}
-                  placeholder="115013000"
+                  placeholder="122051900"
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-slate-800"
                 />
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  Padrão <strong>115013000</strong> (Suporte em TI — correlação Anexo VIII p/ 010701)
+                  Padrão <strong>122051900</strong> (1.2205.19.00 — Educação e treinamento p/ item 080201)
                 </span>
               </div>
 

@@ -162,17 +162,31 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const d = new Date();
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         })();
+        const migratedServiceCode =
+          !parsed.serviceCode || parsed.serviceCode === '010701' || parsed.serviceCode === '01.07'
+            ? '080201'
+            : parsed.serviceCode;
+        const migratedCNbs =
+          !parsed.cNbs || parsed.cNbs === '115013000'
+            ? '122051900'
+            : parsed.cNbs;
+        const migratedCnae =
+          !parsed.cnaePrincipal || parsed.cnaePrincipal === '6202-3/00'
+            ? '8599-6/04'
+            : parsed.cnaePrincipal;
         return {
           ...initialCompanySettings,
           ...parsed,
           fatorRActive: sanitizedFatorR,
+          serviceCode: migratedServiceCode,
+          cnaePrincipal: migratedCnae,
           dpsSeries: parsed.dpsSeries || '2',
           nextDpsNumber: Math.max(1, Number(parsed.nextDpsNumber) || 1),
           autoTransmitEnabled: Boolean(parsed.autoTransmitEnabled),
           autoTransmitStartDate: parsed.autoTransmitStartDate || todayLocalIso,
           reformaTributariaEnabled:
             parsed.reformaTributariaEnabled !== undefined ? Boolean(parsed.reformaTributariaEnabled) : true,
-          cNbs: parsed.cNbs || '115013000',
+          cNbs: migratedCNbs,
           ibsCbsFinNfse: parsed.ibsCbsFinNfse || '0',
           ibsCbsIndFinal: parsed.ibsCbsIndFinal === '0' ? '0' : '1',
           ibsCbsIndOp: parsed.ibsCbsIndOp || '100301',
@@ -204,7 +218,15 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           municipalRegistration: parsed.municipalRegistration || '1618',
           municipalProvider: 'PADRAO_NACIONAL',
           fiscalEnvironment: 'HOMOLOGACAO',
-          serviceCode: parsed.serviceCode === '01.07' ? '010701' : (parsed.serviceCode || '010701'),
+          serviceCode:
+            !parsed.serviceCode || parsed.serviceCode === '01.07' || parsed.serviceCode === '010701'
+              ? '080201'
+              : parsed.serviceCode,
+          cnaePrincipal:
+            !parsed.cnaePrincipal || parsed.cnaePrincipal === '6202-3/00'
+              ? '8599-6/04'
+              : parsed.cnaePrincipal,
+          cNbs: !parsed.cNbs || parsed.cNbs === '115013000' ? '122051900' : parsed.cNbs,
           certificateStatus: 'MISSING',
           certificatePassword: undefined,
         };
@@ -369,21 +391,42 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setSales(idbSales);
         }
         if (Array.isArray(idbInvoices) && idbInvoices.length > 0) {
-          // Recalculate pending/error invoices against current company tax settings
-          // (automatically fixes legacy invoices mistakenly calculated at 15.5% Anexo V when RBT12=0)
+          // Recalculate pending/error invoices against current company tax & service code settings
           const refreshedInvoices = idbInvoices.map(inv => {
             if (inv.status !== 'PENDENTE' && inv.status !== 'ERRO') return inv;
             const recalculatedTaxes = calculateTaxes(inv.grossAmount, company);
-            if (
+            const nextServiceCode =
+              !inv.serviceCode || inv.serviceCode === '010701' || inv.serviceCode === '01.07'
+                ? company.serviceCode || '080201'
+                : inv.serviceCode;
+            const nextCnae =
+              !inv.cnae || inv.cnae === '6202-3/00'
+                ? company.cnaePrincipal || '8599-6/04'
+                : inv.cnae;
+            const nextDescription = inv.description?.startsWith('Licenciamento e acesso a plataforma de conteúdo digital:')
+              ? inv.description.replace(
+                  'Licenciamento e acesso a plataforma de conteúdo digital:',
+                  'Curso, treinamento e material educacional digital:'
+                )
+              : inv.description;
+            const sameTaxes =
               inv.taxes &&
               inv.taxes.effectiveRate === recalculatedTaxes.effectiveRate &&
               inv.taxes.totalTax === recalculatedTaxes.totalTax &&
-              inv.taxes.regime === recalculatedTaxes.regime
+              inv.taxes.regime === recalculatedTaxes.regime;
+            if (
+              sameTaxes &&
+              nextServiceCode === inv.serviceCode &&
+              nextCnae === inv.cnae &&
+              nextDescription === inv.description
             ) {
               return inv;
             }
             return {
               ...inv,
+              serviceCode: nextServiceCode,
+              cnae: nextCnae,
+              description: nextDescription,
               taxes: recalculatedTaxes,
               netAmount: Number((inv.grossAmount - recalculatedTaxes.totalTax).toFixed(2)),
             };
@@ -574,6 +617,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       'defaultIssRate',
     ];
     const hasTaxChange = taxKeys.some(k => Object.prototype.hasOwnProperty.call(settings, k));
+    const hasServiceMetaChange =
+      Object.prototype.hasOwnProperty.call(settings, 'serviceCode') ||
+      Object.prototype.hasOwnProperty.call(settings, 'cnaePrincipal');
 
     if (typeof settings.nextDpsNumber === 'number' && !Number.isNaN(settings.nextDpsNumber)) {
       nextDpsNumberRef.current = Math.max(1, settings.nextDpsNumber);
@@ -582,13 +628,15 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCompany(prev => {
       const nextCompany = { ...prev, ...settings };
       companyRef.current = nextCompany;
-      if (hasTaxChange) {
+      if (hasTaxChange || hasServiceMetaChange) {
         setInvoices(prevInvoices =>
           prevInvoices.map(inv => {
             if (inv.status !== 'PENDENTE' && inv.status !== 'ERRO') return inv;
-            const newTaxes = calculateTaxes(inv.grossAmount, nextCompany);
+            const newTaxes = hasTaxChange ? calculateTaxes(inv.grossAmount, nextCompany) : inv.taxes;
             return {
               ...inv,
+              serviceCode: hasServiceMetaChange ? nextCompany.serviceCode : inv.serviceCode,
+              cnae: hasServiceMetaChange ? nextCompany.cnaePrincipal : inv.cnae,
               taxes: newTaxes,
               netAmount: Number((inv.grossAmount - newTaxes.totalTax).toFixed(2)),
             };
@@ -971,8 +1019,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       scheduledFor: `${formattedWarranty} (Aguardando Transmissão Sefin)`,
       customer: newSale.customer,
       productName: input.productName,
-      description: `Licenciamento e acesso a plataforma de conteúdo digital: ${input.productName}`,
-      serviceCode: company.serviceCode,
+      description: `Curso, treinamento e material educacional digital: ${input.productName}`,
+      serviceCode: company.serviceCode || '080201',
       cnae: company.cnaePrincipal,
       grossAmount: input.amount,
       netAmount: input.amount - taxes.totalTax,
@@ -1100,7 +1148,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             return {
               ...inv,
               productName: fullProductName,
-              description: `Licenciamento e acesso a plataforma de conteúdo digital: ${fullProductName}`,
+              description: `Curso, treinamento e material educacional digital: ${fullProductName}`,
               grossAmount: amount,
               netAmount: amount - newTaxes.totalTax,
               taxes: newTaxes,
@@ -1165,8 +1213,8 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         scheduledFor: `${formattedWarranty} (Aguardando Transmissão)`,
         customer: newSale.customer,
         productName: fullProductName,
-        description: `Licenciamento e acesso a plataforma de conteúdo digital: ${fullProductName}`,
-        serviceCode: company.serviceCode,
+        description: `Curso, treinamento e material educacional digital: ${fullProductName}`,
+        serviceCode: company.serviceCode || '080201',
         cnae: company.cnaePrincipal,
         grossAmount: amount,
         netAmount: amount - taxes.totalTax,
@@ -1349,7 +1397,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               nextInvoices.push({
                 ...existing,
                 productName: item.productName,
-                description: `Licenciamento e acesso a plataforma de conteúdo digital: ${item.productName}`,
+                description: `Curso, treinamento e material educacional digital: ${item.productName}`,
+                serviceCode: company.serviceCode || '080201',
+                cnae: company.cnaePrincipal || '8599-6/04',
                 grossAmount: item.amount,
                 netAmount: Number((item.amount - taxes.totalTax).toFixed(2)),
                 taxes,
@@ -1407,9 +1457,9 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 state: item.customer.state || '',
               },
               productName: item.productName,
-              description: `Licenciamento e acesso a plataforma de conteúdo digital: ${item.productName}`,
-              serviceCode: company.serviceCode || '010701',
-              cnae: company.cnaePrincipal,
+              description: `Curso, treinamento e material educacional digital: ${item.productName}`,
+              serviceCode: company.serviceCode || '080201',
+              cnae: company.cnaePrincipal || '8599-6/04',
               grossAmount: item.amount,
               netAmount: Number((item.amount - taxes.totalTax).toFixed(2)),
               taxes,
@@ -1484,7 +1534,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           netAmount: newAmount - newTaxes.totalTax,
           taxes: newTaxes,
           productName: newProd,
-          description: `Licenciamento e acesso a plataforma de conteúdo digital: ${newProd}`,
+          description: `Curso, treinamento e material educacional digital: ${newProd}`,
           customer: {
             ...inv.customer,
             name: updates.customerName || inv.customer.name,

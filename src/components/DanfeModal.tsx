@@ -368,7 +368,7 @@ export const DanfeModal: React.FC<DanfeModalProps> = ({ invoice, onClose }) => {
               <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50 border border-slate-200 text-[11px]">
                 <div>
                   <span className="text-slate-500">Cód. Tributação Nacional (cTribNac):</span>{' '}
-                  <strong>{invoice.serviceCode || company.serviceCode || '010701'}</strong>
+                  <strong>{invoice.serviceCode || company.serviceCode || '080201'}</strong>
                 </div>
                 <div className="text-right">
                   <span className="text-slate-500">CNAE:</span>{' '}

@@ -240,8 +240,9 @@ export function normalizeCTribNac(rawCode?: string): string {
   const digits = digitsOnly(rawCode);
   if (digits.length === 6) return digits;
   if (digits.length === 4) return `${digits}01`;
+  if (digits.length === 3) return `0${digits}01`; // e.g. "8.02" -> "802" -> "080201"
   if (digits.length > 6) return digits.slice(0, 6);
-  return '010701';
+  return '080201';
 }
 
 /**
@@ -499,7 +500,7 @@ export function buildDpsXml(
   }
 
   const cTribNac = normalizeCTribNac(input.serviceCode || input.company.serviceCode);
-  const xDescServ = escapeXml(input.description || 'Licenciamento e acesso a plataforma de conteudo digital').slice(0, 2000);
+  const xDescServ = escapeXml(input.description || 'Curso, treinamento e material educacional digital').slice(0, 2000);
   const vServ = Number(input.grossAmount || 0).toFixed(2);
 
   // Reforma Tributária (IBS / CBS — NFS-e Padrão Nacional v1.01)
@@ -507,8 +508,8 @@ export function buildDpsXml(
   const dpsVersion = includeReforma ? '1.01' : '1.00';
 
   // Rule E0322: <cNBS> (9 digits, no punctuation) is mandatory inside <cServ> whenever <IBSCBS> is sent
-  const rawNbsDigits = digitsOnly(input.company.cNbs || '115013000');
-  const cNbs = (rawNbsDigits.length === 9 ? rawNbsDigits : rawNbsDigits.padEnd(9, '0').slice(0, 9)) || '115013000';
+  const rawNbsDigits = digitsOnly(input.company.cNbs || '122051900');
+  const cNbs = (rawNbsDigits.length === 9 ? rawNbsDigits : rawNbsDigits.padEnd(9, '0').slice(0, 9)) || '122051900';
   const cNbsTag = includeReforma ? `<cNBS>${cNbs}</cNBS>` : '';
 
   let ibsCbsTag = '';

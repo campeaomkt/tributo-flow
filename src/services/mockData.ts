@@ -24,10 +24,10 @@ export const initialCompanySettings: CompanySettings = {
   rbt12: 0,
   payroll12: 0,
   defaultIssRate: 2.0,
-  serviceCode: '010701', // cTribNac 6 dígitos: 01.07.01 - Suporte técnico e serviços digitais
-  cnaePrincipal: '6202-3/00', // Desenvolvimento e licenciamento de softwares e infoprodutos
+  serviceCode: '080201', // cTribNac 6 dígitos: 08.02.01 - Instrução, treinamento, cursos e conteúdo educacional
+  cnaePrincipal: '8599-6/04', // Treinamento em desenvolvimento profissional e gerencial (cursos e e-books)
   reformaTributariaEnabled: true,
-  cNbs: '115013000', // 1.1501.30.00 - Serviços de suporte em TI (Anexo VIII p/ 010701)
+  cNbs: '122051900', // 1.2205.19.00 - Outros serviços de educação e treinamento (Anexo VIII p/ 080201)
   ibsCbsFinNfse: '0',
   ibsCbsIndFinal: '1',
   ibsCbsIndOp: '100301',
