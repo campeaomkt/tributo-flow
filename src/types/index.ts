@@ -169,9 +169,10 @@ export interface CompanySettings {
   taxRegime: TaxRegime;
   simplesAnexo: 'ANEXO_I' | 'ANEXO_III' | 'ANEXO_V';
   fatorRActive: boolean;
+  customEffectiveRate?: number; // Alíquota efetiva real do DAS informada pelo usuário (%)
   rbt12: number; // Receita Bruta Total 12 meses
   payroll12: number; // Folha de pagamento 12 meses
-  defaultIssRate: number; // e.g. 2.9%
+  defaultIssRate: number; // e.g. 2.0%
   serviceCode: string; // "010701" (cTribNac 6 dígitos)
   cnaePrincipal: string; // "6202-3/00"
   address: {

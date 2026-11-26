@@ -16,7 +16,7 @@ export const initialCompanySettings: CompanySettings = {
   fiscalEnvironment: 'HOMOLOGACAO',
   taxRegime: 'SIMPLES_NACIONAL',
   simplesAnexo: 'ANEXO_III',
-  fatorRActive: true,
+  fatorRActive: false,
   rbt12: 0,
   payroll12: 0,
   defaultIssRate: 2.0,

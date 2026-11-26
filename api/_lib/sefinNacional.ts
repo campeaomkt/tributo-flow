@@ -413,7 +413,11 @@ export function buildDpsXml(input: DpsInput): { dpsId: string; xml: string } {
   // totTrib block according to Simples Nacional / MEI / Normal
   let totTribTag = '';
   if (opSimpNac === '3') {
-    const pSn = Number(input.effectiveTaxRate || 6.0).toFixed(2);
+    const pSn = Number(
+      input.effectiveTaxRate !== undefined && input.effectiveTaxRate !== null
+        ? input.effectiveTaxRate
+        : 6.0
+    ).toFixed(2);
     totTribTag = `<totTrib><pTotTribSN>${pSn}</pTotTribSN></totTrib>`;
   } else if (opSimpNac === '2') {
     totTribTag = `<totTrib><indTotTrib>0</indTotTrib></totTrib>`;

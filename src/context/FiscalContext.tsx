@@ -139,9 +139,14 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (savedV8) {
       try {
         const parsed = JSON.parse(savedV8);
+        const sanitizedFatorR =
+          parsed.fatorRActive && (!parsed.rbt12 || parsed.rbt12 <= 0) && (!parsed.payroll12 || parsed.payroll12 <= 0)
+            ? false
+            : Boolean(parsed.fatorRActive);
         return {
           ...initialCompanySettings,
           ...parsed,
+          fatorRActive: sanitizedFatorR,
           municipalRegistration: parsed.municipalRegistration || '1618',
           certificatePassword: undefined, // Never hydrate secret from localStorage
         };
@@ -156,9 +161,14 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (legacy) {
       try {
         const parsed = JSON.parse(legacy);
+        const sanitizedFatorR =
+          parsed.fatorRActive && (!parsed.rbt12 || parsed.rbt12 <= 0) && (!parsed.payroll12 || parsed.payroll12 <= 0)
+            ? false
+            : Boolean(parsed.fatorRActive);
         return {
           ...initialCompanySettings,
           ...parsed,
+          fatorRActive: sanitizedFatorR,
           municipalRegistration: parsed.municipalRegistration || '1618',
           municipalProvider: 'PADRAO_NACIONAL',
           fiscalEnvironment: 'HOMOLOGACAO',
@@ -281,7 +291,26 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setSales(idbSales);
         }
         if (Array.isArray(idbInvoices) && idbInvoices.length > 0) {
-          setInvoices(idbInvoices);
+          // Recalculate pending/error invoices against current company tax settings
+          // (automatically fixes legacy invoices mistakenly calculated at 15.5% Anexo V when RBT12=0)
+          const refreshedInvoices = idbInvoices.map(inv => {
+            if (inv.status !== 'PENDENTE' && inv.status !== 'ERRO') return inv;
+            const recalculatedTaxes = calculateTaxes(inv.grossAmount, company);
+            if (
+              inv.taxes &&
+              inv.taxes.effectiveRate === recalculatedTaxes.effectiveRate &&
+              inv.taxes.totalTax === recalculatedTaxes.totalTax &&
+              inv.taxes.regime === recalculatedTaxes.regime
+            ) {
+              return inv;
+            }
+            return {
+              ...inv,
+              taxes: recalculatedTaxes,
+              netAmount: Number((inv.grossAmount - recalculatedTaxes.totalTax).toFixed(2)),
+            };
+          });
+          setInvoices(refreshedInvoices);
         }
         hasHydratedIdbRef.current = true;
       }
@@ -456,7 +485,34 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   const updateCompany = (settings: Partial<CompanySettings>) => {
-    setCompany(prev => ({ ...prev, ...settings }));
+    const taxKeys: Array<keyof CompanySettings> = [
+      'taxRegime',
+      'simplesAnexo',
+      'fatorRActive',
+      'customEffectiveRate',
+      'rbt12',
+      'payroll12',
+      'defaultIssRate',
+    ];
+    const hasTaxChange = taxKeys.some(k => Object.prototype.hasOwnProperty.call(settings, k));
+
+    setCompany(prev => {
+      const nextCompany = { ...prev, ...settings };
+      if (hasTaxChange) {
+        setInvoices(prevInvoices =>
+          prevInvoices.map(inv => {
+            if (inv.status !== 'PENDENTE' && inv.status !== 'ERRO') return inv;
+            const newTaxes = calculateTaxes(inv.grossAmount, nextCompany);
+            return {
+              ...inv,
+              taxes: newTaxes,
+              netAmount: Number((inv.grossAmount - newTaxes.totalTax).toFixed(2)),
+            };
+          })
+        );
+      }
+      return nextCompany;
+    });
   };
 
   const updatePlatform = (platformId: PlatformId, config: Partial<PlatformConfig>) => {

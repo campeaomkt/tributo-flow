@@ -25,47 +25,52 @@ export function calculateTaxes(amount: number, company: CompanySettings): TaxBre
   }
 
   if (taxRegime === 'SIMPLES_NACIONAL') {
-    // Check Fator R
-    let effectiveAnexo = simplesAnexo;
-    if (fatorRActive) {
-      const fatorR = rbt12 > 0 ? (payroll12 / rbt12) : 0;
-      if (fatorR >= 0.28) {
-        effectiveAnexo = 'ANEXO_III'; // Bonified to Anexo III
-      } else {
-        effectiveAnexo = 'ANEXO_V';
-      }
-    }
-
     let effectiveRate = 6.0; // Default base Anexo III faixa 1
-    if (effectiveAnexo === 'ANEXO_III') {
-      if (rbt12 <= 180000) {
-        effectiveRate = 6.0;
-      } else if (rbt12 <= 360000) {
-        effectiveRate = Number((((rbt12 * 0.112) - 9360) / rbt12 * 100).toFixed(2));
-      } else if (rbt12 <= 720000) {
-        effectiveRate = Number((((rbt12 * 0.135) - 17640) / rbt12 * 100).toFixed(2));
-      } else if (rbt12 <= 1800000) {
-        effectiveRate = Number((((rbt12 * 0.16) - 35640) / rbt12 * 100).toFixed(2));
-      } else {
-        effectiveRate = Number((((rbt12 * 0.21) - 125640) / rbt12 * 100).toFixed(2));
-      }
-    } else if (effectiveAnexo === 'ANEXO_V') {
-      if (rbt12 <= 180000) {
-        effectiveRate = 15.5;
-      } else if (rbt12 <= 360000) {
-        effectiveRate = Number((((rbt12 * 0.18) - 4500) / rbt12 * 100).toFixed(2));
-      } else {
-        effectiveRate = 19.5;
-      }
+
+    if (
+      typeof company.customEffectiveRate === 'number' &&
+      !Number.isNaN(company.customEffectiveRate) &&
+      company.customEffectiveRate >= 0
+    ) {
+      effectiveRate = Number(company.customEffectiveRate.toFixed(2));
     } else {
-      // ANEXO_I (Comércio)
-      effectiveRate = 4.0;
+      // Only apply Fator R automatic switching when the user has actually filled RBT12 > 0
+      let effectiveAnexo = simplesAnexo;
+      if (fatorRActive && rbt12 > 0) {
+        const fatorR = payroll12 / rbt12;
+        effectiveAnexo = fatorR >= 0.28 ? 'ANEXO_III' : 'ANEXO_V';
+      }
+
+      if (effectiveAnexo === 'ANEXO_III') {
+        if (rbt12 <= 180000) {
+          effectiveRate = 6.0;
+        } else if (rbt12 <= 360000) {
+          effectiveRate = Number((((rbt12 * 0.112) - 9360) / rbt12 * 100).toFixed(2));
+        } else if (rbt12 <= 720000) {
+          effectiveRate = Number((((rbt12 * 0.135) - 17640) / rbt12 * 100).toFixed(2));
+        } else if (rbt12 <= 1800000) {
+          effectiveRate = Number((((rbt12 * 0.16) - 35640) / rbt12 * 100).toFixed(2));
+        } else {
+          effectiveRate = Number((((rbt12 * 0.21) - 125640) / rbt12 * 100).toFixed(2));
+        }
+      } else if (effectiveAnexo === 'ANEXO_V') {
+        if (rbt12 <= 180000) {
+          effectiveRate = 15.5;
+        } else if (rbt12 <= 360000) {
+          effectiveRate = Number((((rbt12 * 0.18) - 4500) / rbt12 * 100).toFixed(2));
+        } else {
+          effectiveRate = 19.5;
+        }
+      } else {
+        // ANEXO_I (Comércio)
+        effectiveRate = 4.0;
+      }
     }
 
     // Inside DAS Simples Nacional, ISS represents roughly 33.5% of the total tax
     const totalTax = Number(((amount * effectiveRate) / 100).toFixed(2));
     const issRate = defaultIssRate || 2.0;
-    const issAmount = Number(((totalTax * 0.335)).toFixed(2));
+    const issAmount = Number((totalTax * 0.335).toFixed(2));
 
     return {
       regime: 'SIMPLES_NACIONAL',

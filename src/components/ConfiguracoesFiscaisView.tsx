@@ -26,6 +26,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { validatePfxCertificate, SefinConnectionTestResult } from '../services/directTransmitter';
+import { calculateTaxes } from '../services/taxCalculator';
 
 export const ConfiguracoesFiscaisView: React.FC = () => {
   const {
@@ -42,6 +43,9 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
   const [taxRegime, setTaxRegime] = useState<TaxRegime>(company.taxRegime);
   const [simplesAnexo, setSimplesAnexo] = useState(company.simplesAnexo);
   const [fatorRActive, setFatorRActive] = useState(company.fatorRActive);
+  const [customEffectiveRate, setCustomEffectiveRate] = useState(
+    company.customEffectiveRate !== undefined ? company.customEffectiveRate.toString() : ''
+  );
   const [rbt12, setRbt12] = useState(company.rbt12.toString());
   const [payroll12, setPayroll12] = useState(company.payroll12.toString());
   const [defaultIssRate, setDefaultIssRate] = useState(company.defaultIssRate.toString());
@@ -83,11 +87,29 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
     }
   };
 
-  // Calculate live Fator R
+  // Calculate live Fator R & effective tax rate preview
   const numRbt12 = parseFloat(rbt12) || 0;
   const numPayroll = parseFloat(payroll12) || 0;
+  const parsedCustomRate =
+    customEffectiveRate.trim() !== ''
+      ? parseFloat(customEffectiveRate.replace(',', '.'))
+      : undefined;
+  const validCustomRate =
+    parsedCustomRate !== undefined && !Number.isNaN(parsedCustomRate) && parsedCustomRate >= 0
+      ? parsedCustomRate
+      : undefined;
   const liveFatorR = numRbt12 > 0 ? ((numPayroll / numRbt12) * 100).toFixed(1) : '0';
-  const isFatorRBenefited = parseFloat(liveFatorR) >= 28.0;
+  const isFatorRBenefited = numRbt12 > 0 && parseFloat(liveFatorR) >= 28.0;
+  const livePreviewTax = calculateTaxes(100, {
+    ...company,
+    taxRegime,
+    simplesAnexo,
+    fatorRActive,
+    customEffectiveRate: validCustomRate,
+    rbt12: numRbt12,
+    payroll12: numPayroll,
+    defaultIssRate: parseFloat(defaultIssRate.replace(',', '.')) || 2.0,
+  });
 
   const handleSelectFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -207,9 +229,10 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
       taxRegime,
       simplesAnexo,
       fatorRActive,
+      customEffectiveRate: validCustomRate,
       rbt12: numRbt12,
       payroll12: numPayroll,
-      defaultIssRate: parseFloat(defaultIssRate) || 2.9,
+      defaultIssRate: parseFloat(defaultIssRate.replace(',', '.')) || 2.0,
       serviceCode,
       cnaePrincipal,
       corporateName,
@@ -442,63 +465,111 @@ export const ConfiguracoesFiscaisView: React.FC = () => {
         {/* Simples Nacional & Fator R Configuration */}
         {taxRegime === 'SIMPLES_NACIONAL' && (
           <div className="p-5 rounded-xl bg-purple-50/60 border border-purple-200 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-purple-700" />
-                <h3 className="font-bold text-purple-950 text-sm">Otimizador de Fator R (Economia de Impostos)</h3>
+                <h3 className="font-bold text-purple-950 text-sm">Alíquota Real do Simples Nacional (DAS) & Fator R</h3>
               </div>
-              <label className="flex items-center gap-2 text-xs font-semibold text-purple-900 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={fatorRActive}
-                  onChange={e => setFatorRActive(e.target.checked)}
-                  className="rounded text-purple-600"
-                />
-                <span>Habilitar Fator R Automático</span>
-              </label>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-700 text-white text-xs font-bold">
+                Alíquota ativa nas notas: {livePreviewTax.effectiveRate}%
+              </span>
             </div>
 
-            <p className="text-xs text-purple-900/80 leading-relaxed">
-              Quando a folha de pagamento (pró-labore + salários + encargos) representa 28% ou mais do faturamento dos últimos 12 meses, sua empresa é tributada pelo <strong>Anexo III (iniciando em 6%)</strong> em vez do Anexo V (15,5%), reduzindo sua carga tributária em mais de 60%!
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Receita Bruta Acumulada 12 Meses (RBT12)
+                  Alíquota Efetiva Real do seu DAS (%) — Opcional
                 </label>
                 <input
-                  type="number"
-                  value={rbt12}
-                  onChange={e => setRbt12(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-mono text-xs"
+                  type="text"
+                  value={customEffectiveRate}
+                  onChange={e => setCustomEffectiveRate(e.target.value)}
+                  placeholder="Ex: 4.0 ou 4.5 (deixe vazio para tabela automática)"
+                  className="w-full px-3 py-2 rounded-lg border border-purple-300 bg-white font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-600"
                 />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Se você já sabe exatamente quanto paga no DAS (veja na guia PGDAS-D ou com seu contador), informe aqui. Ao salvar, todas as notas pendentes são recalculadas automaticamente.
+                </span>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Folha de Pagamento Acumulada 12 Meses
+                  Anexo Padrão do Simples Nacional
                 </label>
-                <input
-                  type="number"
-                  value={payroll12}
-                  onChange={e => setPayroll12(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-mono text-xs"
-                />
+                <select
+                  value={simplesAnexo}
+                  onChange={e => setSimplesAnexo(e.target.value as 'ANEXO_I' | 'ANEXO_III' | 'ANEXO_V')}
+                  disabled={validCustomRate !== undefined}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 disabled:opacity-50"
+                >
+                  <option value="ANEXO_I">Anexo I — Comércio / E-books (a partir de 4,0%)</option>
+                  <option value="ANEXO_III">Anexo III — Serviços / Cursos / Suporte (a partir de 6,0%)</option>
+                  <option value="ANEXO_V">Anexo V — Serviços sem Fator R (a partir de 15,5%)</option>
+                </select>
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  {validCustomRate !== undefined
+                    ? 'Substituído pela Alíquota Efetiva Real informada ao lado.'
+                    : 'No Simples Nacional o imposto é pago na guia mensal DAS — o percentual na nota é informativo (Lei da Transparência).'}
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-purple-200/70 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-950">Otimizador de Fator R (Anexo III vs Anexo V)</span>
+                <label className="flex items-center gap-2 text-xs font-semibold text-purple-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={fatorRActive}
+                    onChange={e => setFatorRActive(e.target.checked)}
+                    className="rounded text-purple-600"
+                  />
+                  <span>Calcular Anexo automaticamente pelo Fator R</span>
+                </label>
               </div>
 
-              <div className="p-3 rounded-lg bg-white border border-purple-200 flex flex-col justify-center">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">Fator R Calculado:</span>
-                  <span className={`text-base font-extrabold ${isFatorRBenefited ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {liveFatorR}%
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Receita Bruta Acumulada 12 Meses (RBT12)
+                  </label>
+                  <input
+                    type="number"
+                    value={rbt12}
+                    onChange={e => setRbt12(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-mono text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Folha de Pagamento Acumulada 12 Meses
+                  </label>
+                  <input
+                    type="number"
+                    value={payroll12}
+                    onChange={e => setPayroll12(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-mono text-xs"
+                  />
+                </div>
+
+                <div className="p-3 rounded-lg bg-white border border-purple-200 flex flex-col justify-center">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">Fator R Calculado:</span>
+                    <span className={`text-base font-extrabold ${isFatorRBenefited ? 'text-emerald-700' : 'text-slate-700'}`}>
+                      {numRbt12 > 0 ? `${liveFatorR}%` : '—'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-0.5">
+                    {!fatorRActive
+                      ? 'Fator R automático desativado (usa o Anexo escolhido acima)'
+                      : numRbt12 <= 0
+                      ? 'Preencha RBT12 > 0 para ativar (sem dados, usa o Anexo acima)'
+                      : isFatorRBenefited
+                      ? '✓ Enquadrado no Anexo III (Alíquota inicial 6.0%)'
+                      : 'Abaixo de 28% (Enquadrado no Anexo V — 15.5%)'}
                   </span>
                 </div>
-                <span className="text-[10px] text-slate-400 mt-0.5">
-                  {isFatorRBenefited 
-                    ? '✓ Enquadrado no Anexo III (Alíquota inicial 6.0%)'
-                    : 'Abaixo de 28% (Enquadrado no Anexo V)'}
-                </span>
               </div>
             </div>
           </div>
